@@ -1,7 +1,4 @@
 /*
- * lemonbar-status -- formats the system status for lemonbar
- *
- *
  * Copyright (c) 2017 Wilfried Meindl <wilfried.meindl@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
@@ -15,7 +12,22 @@
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ *
+ * lemonbar-status -- formats the system status for lemonbar
+ *
+ * This program collects information about the user's mail status,
+ * the net connection, the battery status, the screen brightness,
+ * the weather, and the date and outputs a line on standard ouput
+ * which can be processes by lemonbar. It tries to be low on system
+ * resources.
+ *
+ * The program does not take any commandline arguments.
+ *
+ * If it is appropriate, the program waits for events from the information
+ * sources. Otherwise the information is polled at regular intervals.
  */
+
 
 #include <sys/ioctl.h>
 #include <sys/types.h>
@@ -31,8 +43,10 @@
 #include <stdio.h>
 #include <string.h>
 
+
 #define BATT_INFO_BUFLEN 13
 #define APM_DEV_PATH "/dev/apm"
+
 
 static int	open_socket(const char *);
 static void	get_battery_info(struct apm_power_info *);
