@@ -29,8 +29,9 @@
  */
 
 
-#include <sys/ioctl.h>
 #include <sys/types.h>
+#include <sys/event.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -53,6 +54,8 @@
 #define APM_DEV_PATH "/dev/apm"
 #define NORMAL_COLOR "%{F#DDDDDD}"
 #define MAIL_COLOR "%{F#FFFF00}"
+#define CLOCK_INTERVAL 10 * 1000
+#define BATTERY_INTERVAL 10 * 1000
 
 
 static int	open_socket(const char *);
@@ -165,12 +168,12 @@ mail_file()
 static char *
 mail_info(int fd)
 {
-    	struct stat mail_info;
+    	struct stat st;
 
-	if (fstat(fd, &mail_info) < 0)
+	if (fstat(fd, &st) < 0)
 		err(1, "cannot get mail box status");
 
-	if (timespec_later(&mail_info.st_mtim, &mail_info.st_atim))
+	if (timespec_later(&st.st_mtim, &st.st_atim))
 		return MAIL_COLOR "MAIL" NORMAL_COLOR;
 	else
 		return NULL;
@@ -211,26 +214,62 @@ output_status(char *infos[], int len)
 	fputs("\n", stdout);
 }
 
+#define EVENTS 3
+enum timer_ids { CLOCK_TIMER, BATTERY_TIMER };
 
 int
 main()
 {
 	char *infos[INFO_ARRAY_SIZE];
-	int mail_fd;
+	struct kevent kev[EVENTS];
+	int mail_fd, kq, nev, i;
+
+	bzero(infos, INFO_ARRAY_SIZE);
 
 	mail_fd = mail_file();
 
-	/* Battery */
+	infos[INFO_MAIL] = mail_info(mail_fd);
+	infos[INFO_CLOCK] = clock_info();
 	infos[INFO_BATTERY] = battery_info();
 
-	/* Mail */
-	infos[INFO_MAIL] = mail_info(mail_fd);
+	output_status(infos, INFO_ARRAY_SIZE);
+
+	if ((kq = kqueue()) < 0)
+		err(1, NULL);
+	EV_SET(&kev[0], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+	    NOTE_WRITE| NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
+	EV_SET(&kev[1], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    CLOCK_INTERVAL, NULL);
+	EV_SET(&kev[2], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    BATTERY_INTERVAL, NULL);
+	kevent(kq, kev, EVENTS, NULL, 0, NULL);
+	for (;;) {
+	    nev = kevent(kq, NULL, 0, kev, EVENTS, NULL);
+	    if (nev == -1)
+		    err(1, NULL);
+	    else if (nev == 0) {	/* timeout */
+		    infos[INFO_BATTERY] = battery_info();
+		    infos[INFO_CLOCK] = clock_info();
+	    } else if (nev > 0)
+		    for (i = 0; i < nev; i++) {
+			    if (kev[i].flags & EV_ERROR)
+				    errx(1, "%s", strerror(kev[i].data));
+			    else if (kev[i].filter == EVFILT_VNODE &&
+				kev[i].ident == mail_fd)
+				    infos[INFO_MAIL] = mail_info(mail_fd);
+			    else if (kev[i].filter == EVFILT_TIMER) {
+				    if (kev[i].ident == CLOCK_TIMER)
+					    infos[INFO_CLOCK] = clock_info();
+				    else if (kev[i].ident == BATTERY_TIMER)
+					    infos[INFO_BATTERY] =
+						battery_info();
+			    }
+		    }
+	    output_status(infos, INFO_ARRAY_SIZE);
+	}
+
 	close(mail_fd);
 
-	/* Clock */
-	infos[INFO_CLOCK] = clock_info();
-
-	output_status(infos, INFO_ARRAY_SIZE);
 
 	return 0;
 }
