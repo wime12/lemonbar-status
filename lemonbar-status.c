@@ -47,6 +47,8 @@
 
 #define BATT_INFO_BUFLEN 13
 #define APM_DEV_PATH "/dev/apm"
+#define NORMAL_COLOR "%{F#DDDDDD}"
+#define MAIL_COLOR "%{F#FFFF00}"
 
 
 static int	open_socket(const char *);
@@ -149,9 +151,8 @@ timespec_later(struct timespec *t1, struct timespec *t2)
 static char *
 format_mail_info(struct stat *mail_info)
 {
-
 	if (timespec_later(&mail_info->st_mtim, &mail_info->st_atim))
-		return "MAIL";
+		return MAIL_COLOR "MAIL" NORMAL_COLOR;
 	else
 		return NULL;
 }
