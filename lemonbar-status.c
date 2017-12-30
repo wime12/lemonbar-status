@@ -58,8 +58,12 @@
 static int	open_socket(const char *);
 static char    *battery_info();
 static int	timespec_later(struct timespec *, struct timespec *);
+static int	mail_file();
 static char    *mail_info(int fd);
 static char    *clock_info();
+static void	output_status();
+
+enum infos { INFO_MAIL, INFO_BATTERY, INFO_CLOCK, INFO_ARRAY_SIZE };
 
 
 static int
@@ -138,6 +142,26 @@ timespec_later(struct timespec *t1, struct timespec *t2)
 		return t1->tv_sec > t2->tv_sec;
 }
 
+static int
+mail_file()
+{
+	char mail_path[MAILPATH_BUFLEN];
+	char *user;
+	int mail_fd;
+
+	strlcpy(mail_path, _PATH_MAILDIR "/", MAILPATH_BUFLEN);
+
+	if ((user = getlogin()) == NULL)
+	    err(1, "cannot get login name");
+
+	strlcat(mail_path, user, MAILPATH_BUFLEN);
+
+	if ((mail_fd = open(mail_path, O_RDONLY)) < 0)
+		err(1, "cannot open %s", mail_path);
+
+	return mail_fd;
+}
+
 static char *
 mail_info(int fd)
 {
@@ -172,31 +196,42 @@ clock_info()
 	return str;
 }
 
+static void
+output_status(char *infos[], int len)
+{
+	int i;
+
+	for (i = 0; i < len; i++) {
+		if (infos[i] == NULL)
+			continue;
+		fputs(infos[i], stdout);
+		if (i < len - 1)
+			fputs(" | ", stdout);
+	}
+	fputs("\n", stdout);
+}
+
 
 int
 main()
 {
+	char *mail_msg, *infos[INFO_ARRAY_SIZE];
 	int mail_fd;
-	char *mail_msg, *user;
-	char mail_path[MAILPATH_BUFLEN];
+
+	mail_fd = mail_file();
 
 	/* Battery */
-	puts(battery_info());
+	infos[INFO_BATTERY] = battery_info();
 
 	/* Mail */
-	strlcpy(mail_path, _PATH_MAILDIR "/", MAILPATH_BUFLEN);
-	user = getlogin();
-	if (user == NULL)
-	    err(1, "cannot get login name");
-	strlcat(mail_path, user, MAILPATH_BUFLEN);
-	if ((mail_fd = open(mail_path, O_RDONLY)) < 0)
-		err(1, "cannot open %s", mail_path);
 	mail_msg = mail_info(mail_fd);
 	close(mail_fd);
-	puts(mail_msg == NULL ? "NO MAIL" : mail_msg);
+	infos[INFO_MAIL] = mail_msg;
 
 	/* Clock */
-	puts(clock_info());
+	infos[INFO_CLOCK] = clock_info();
+
+	output_status(infos, INFO_ARRAY_SIZE);
 
 	return 0;
 }
