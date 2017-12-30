@@ -108,7 +108,8 @@ format_battery_info(char *str, size_t len, struct apm_power_info *info)
 /* Network */
 
 int
-main() {
+main()
+{
     	struct apm_power_info batt_info;
 	char batt_string[BATT_INFO_BUFLEN];
 
