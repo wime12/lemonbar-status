@@ -37,26 +37,26 @@
 #include <machine/apmvar.h>
 /* room for net includes */
 
-#include <unistd.h>
 #include <errno.h>
 #include <err.h>
 #include <fcntl.h>
+#include <paths.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 
 #define BATT_INFO_BUFLEN 13
 #define APM_DEV_PATH "/dev/apm"
 #define NORMAL_COLOR "%{F#DDDDDD}"
 #define MAIL_COLOR "%{F#FFFF00}"
+#define MAILPATH_BUFLEN 256
 
 
 static int	open_socket(const char *);
-static void	get_battery_info(struct apm_power_info *);
-static char    *format_battery_info(struct apm_power_info *);
-static void	get_mail_info(int fd, struct stat *);
-static char    *format_mail_info(struct stat *);
+static char    *battery_info();
 static int	timespec_later(struct timespec *, struct timespec *);
+static char    *mail_info(int fd);
 
 
 static int
@@ -83,31 +83,26 @@ open_socket(const char *sockname)
 
 /* Battery */
 
-static void
-get_battery_info(struct apm_power_info *info)
+static char *
+battery_info()
 {
-	int fd, state;
+	struct apm_power_info info;
+	static char str[BATT_INFO_BUFLEN];
+	int minutes, n, fd, state;
 
 	fd = open(APM_DEV_PATH, O_RDONLY);
 	if (fd == -1)
 		err(1, "cannot open " APM_DEV_PATH);
 
-	state = ioctl(fd, APM_IOC_GETPOWER, info);
+	state = ioctl(fd, APM_IOC_GETPOWER, &info);
 	close(fd);
 
 	if (state < 0) err(1, "cannot read battery info");
-}
-
-static char *
-format_battery_info(struct apm_power_info *info)
-{
-	int minutes, n;
-	static char str[BATT_INFO_BUFLEN];
 
 	n = -1;
-	switch (info->ac_state) {
+	switch (info.ac_state) {
 	case APM_AC_OFF:
-	        minutes = info->minutes_left;
+	        minutes = info.minutes_left;
 		if (minutes < 0)
 			n = strlcpy(str, "??:??", BATT_INFO_BUFLEN);
 		else
@@ -119,7 +114,7 @@ format_battery_info(struct apm_power_info *info)
 			n = strlcpy(str, "A/C", BATT_INFO_BUFLEN);
 
 		snprintf(str + n, BATT_INFO_BUFLEN - n, " (%d%%)",
-		    info->battery_life);
+		    info.battery_life);
 		return str;
 		break;
 	default:
@@ -130,15 +125,7 @@ format_battery_info(struct apm_power_info *info)
 
 /* Mail */
 
-static void
-get_mail_info(int fd, struct stat *mail_info)
-{
-	if (fstat(fd, mail_info) < 0)
-		err(1, "cannot get mail file status");
-}
-
-
-/* Was t1 was later than t2? */
+/* Was t1 later than t2? */
 static int
 timespec_later(struct timespec *t1, struct timespec *t2)
 {
@@ -149,30 +136,45 @@ timespec_later(struct timespec *t1, struct timespec *t2)
 }
 
 static char *
-format_mail_info(struct stat *mail_info)
+mail_info(int fd)
 {
-	if (timespec_later(&mail_info->st_mtim, &mail_info->st_atim))
+    	struct stat mail_info;
+
+	if (fstat(fd, &mail_info) < 0)
+		err(1, "cannot get mail box status");
+
+	if (timespec_later(&mail_info.st_mtim, &mail_info.st_atim))
 		return MAIL_COLOR "MAIL" NORMAL_COLOR;
 	else
 		return NULL;
 }
 
+
+/* Date */
+
+
+
+
 int
 main()
 {
 	int mail_fd;
-    	struct apm_power_info batt_info;
-	struct stat mail_info;
-	char *mail_msg;
+	char *mail_msg, *user;
+	char mail_path[MAILPATH_BUFLEN];
 
-	get_battery_info(&batt_info);
-	puts(format_battery_info(&batt_info));
+	/* Battery */
+	puts(battery_info());
 
-	if ((mail_fd = open("/var/mail/wilfried", O_RDONLY)) < 0)
-		err(1, "cannot open /var/mail/wilfried");
-	get_mail_info(mail_fd, &mail_info);
+	/* Mail */
+	strlcpy(mail_path, _PATH_MAILDIR "/", MAILPATH_BUFLEN);
+	user = getlogin();
+	if (user == NULL)
+	    err(1, "cannot get login name");
+	strlcat(mail_path, user, MAILPATH_BUFLEN);
+	if ((mail_fd = open(mail_path, O_RDONLY)) < 0)
+		err(1, "cannot open %s", mail_path);
+	mail_msg = mail_info(mail_fd);
 	close(mail_fd);
-	mail_msg = format_mail_info(&mail_info);
 	puts(mail_msg == NULL ? "NO MAIL" : mail_msg);
 
 	return 0;
