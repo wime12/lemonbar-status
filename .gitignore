@@ -1,0 +1,4 @@
+lemonbar-status
+*.o
+.*.swp
+old
