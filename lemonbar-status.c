@@ -97,8 +97,7 @@ format_battery_info(char *str, size_t len, struct apm_power_info *info)
 		if (n < 0)
 			n = strlcpy(str, "A/C", len);
 
-		str += n;
-		snprintf(str, len - n, " (%d%%)", info->battery_life);
+		snprintf(str + n, len - n, " (%d%%)", info->battery_life);
 		break;
 	default:
 		snprintf(str, len, "???");
