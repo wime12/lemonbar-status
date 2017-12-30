@@ -43,20 +43,23 @@
 #include <paths.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 
 #define BATT_INFO_BUFLEN 13
+#define MAILPATH_BUFLEN 256
+#define DATE_BUFLEN 18
 #define APM_DEV_PATH "/dev/apm"
 #define NORMAL_COLOR "%{F#DDDDDD}"
 #define MAIL_COLOR "%{F#FFFF00}"
-#define MAILPATH_BUFLEN 256
 
 
 static int	open_socket(const char *);
 static char    *battery_info();
 static int	timespec_later(struct timespec *, struct timespec *);
 static char    *mail_info(int fd);
+static char    *clock_info();
 
 
 static int
@@ -150,9 +153,24 @@ mail_info(int fd)
 }
 
 
-/* Date */
+/* Clock */
 
+static char *
+clock_info()
+{
+	static char str[DATE_BUFLEN];
+	struct tm ltime;
+	time_t clock;
 
+	if ((clock = time(NULL)) < 0)
+		err(1, "cannot get time");
+
+	if (localtime_r(&clock, &ltime) == NULL)
+		err(1, "cannot convert to localtime");
+	strftime(str, DATE_BUFLEN, "%a %b %d, %R", &ltime);
+
+	return str;
+}
 
 
 int
@@ -176,6 +194,9 @@ main()
 	mail_msg = mail_info(mail_fd);
 	close(mail_fd);
 	puts(mail_msg == NULL ? "NO MAIL" : mail_msg);
+
+	/* Clock */
+	puts(clock_info());
 
 	return 0;
 }
