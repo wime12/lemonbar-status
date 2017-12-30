@@ -152,7 +152,7 @@ mail_file()
 	strlcpy(mail_path, _PATH_MAILDIR "/", MAILPATH_BUFLEN);
 
 	if ((user = getlogin()) == NULL)
-	    err(1, "cannot get login name");
+	    err(1, "cannot get user's login name");
 
 	strlcat(mail_path, user, MAILPATH_BUFLEN);
 
@@ -215,7 +215,7 @@ output_status(char *infos[], int len)
 int
 main()
 {
-	char *mail_msg, *infos[INFO_ARRAY_SIZE];
+	char *infos[INFO_ARRAY_SIZE];
 	int mail_fd;
 
 	mail_fd = mail_file();
@@ -224,9 +224,8 @@ main()
 	infos[INFO_BATTERY] = battery_info();
 
 	/* Mail */
-	mail_msg = mail_info(mail_fd);
+	infos[INFO_MAIL] = mail_info(mail_fd);
 	close(mail_fd);
-	infos[INFO_MAIL] = mail_msg;
 
 	/* Clock */
 	infos[INFO_CLOCK] = clock_info();
