@@ -237,39 +237,39 @@ main()
 	if ((kq = kqueue()) < 0)
 		err(1, NULL);
 	EV_SET(&kev[0], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
-	    NOTE_WRITE| NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
+	    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
 	EV_SET(&kev[1], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    CLOCK_INTERVAL, NULL);
 	EV_SET(&kev[2], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    BATTERY_INTERVAL, NULL);
 	kevent(kq, kev, EVENTS, NULL, 0, NULL);
+
 	for (;;) {
-	    nev = kevent(kq, NULL, 0, kev, EVENTS, NULL);
-	    if (nev == -1)
-		    err(1, NULL);
-	    else if (nev == 0) {	/* timeout */
-		    infos[INFO_BATTERY] = battery_info();
-		    infos[INFO_CLOCK] = clock_info();
-	    } else if (nev > 0)
-		    for (i = 0; i < nev; i++) {
-			    if (kev[i].flags & EV_ERROR)
-				    errx(1, "%s", strerror(kev[i].data));
-			    else if (kev[i].filter == EVFILT_VNODE &&
-				kev[i].ident == mail_fd)
-				    infos[INFO_MAIL] = mail_info(mail_fd);
-			    else if (kev[i].filter == EVFILT_TIMER) {
-				    if (kev[i].ident == CLOCK_TIMER)
-					    infos[INFO_CLOCK] = clock_info();
-				    else if (kev[i].ident == BATTERY_TIMER)
-					    infos[INFO_BATTERY] =
-						battery_info();
-			    }
-		    }
-	    output_status(infos, INFO_ARRAY_SIZE);
+		nev = kevent(kq, NULL, 0, kev, EVENTS, NULL);
+		if (nev == -1)
+			err(1, NULL);
+		else if (nev > 0)
+			for (i = 0; i < nev; i++) {
+				if (kev[i].flags & EV_ERROR)
+					errx(1, "%s",
+					    strerror(kev[i].data));
+				else if (kev[i].filter == EVFILT_VNODE &&
+				    kev[i].ident == mail_fd)
+					infos[INFO_MAIL] =
+					    mail_info(mail_fd);
+				else if (kev[i].filter == EVFILT_TIMER) {
+					if (kev[i].ident == CLOCK_TIMER)
+						infos[INFO_CLOCK] =
+						    clock_info();
+					else if (kev[i].ident ==
+					    BATTERY_TIMER)
+						infos[INFO_BATTERY] =
+						    battery_info();
+				}
+			}
+		output_status(infos, INFO_ARRAY_SIZE);
 	}
-
 	close(mail_fd);
-
 
 	return 0;
 }
