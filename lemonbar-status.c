@@ -31,7 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BATT_INFO_BUFLEN 12
+#define BATT_INFO_BUFLEN 13
 #define APM_DEV_PATH "/dev/apm"
 
 static int	open_socket(const char *);
