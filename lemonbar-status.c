@@ -212,7 +212,6 @@ char *
 network_info()
 {
 	static char str[IFNAMSIZ + 1 + INET6_ADDRSTRLEN];
-	struct ifaddrs *ifap, *ifa;
 	struct ifreq ifr;
 	struct trunk_reqall ra;
 	struct trunk_reqport *rp, rpbuf[TRUNK_MAX_PORTS];
@@ -222,25 +221,9 @@ network_info()
 
 	rp = NULL;
 
-	if (getifaddrs(&ifap)) {
-		warn("cannot get network interfaces");
-		return res;
-	}
-
-	ifa = ifap;
-	while (ifa && strncmp(IFNAME, ifa->ifa_name, sizeof(IFNAME) - 1))
-		ifa = ifa->ifa_next;
-
-	if (ifa == NULL) {
-		warnx("interface " IFNAME " not found");
-		freeifaddrs(ifap);
-		return res;
-	}
-
 	if ((s = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-		warn("could not open socket");
-		freeifaddrs(ifap);
-		return res;
+	    warn("coud not open socket");
+	    return res;
 	}
 
 	/* Trunk ports */
@@ -274,7 +257,7 @@ network_info()
 	/* IP address */
 
 	ifr.ifr_addr.sa_family = AF_INET;
-	strlcpy(ifr.ifr_name, ifa->ifa_name, sizeof(ifr.ifr_name));
+	strlcpy(ifr.ifr_name, IFNAME, sizeof(ifr.ifr_name));
 	if (ioctl(s, SIOCGIFADDR, &ifr) == -1) {
 		warn("could not query inet address");
 		goto cleanup;
@@ -310,7 +293,6 @@ network_info()
 
 cleanup:
 	close(s);
-	freeifaddrs(ifap);
 	return res;
 }
 
