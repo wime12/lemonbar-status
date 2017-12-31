@@ -19,8 +19,7 @@
  * This program collects information about the user's mail status,
  * the net connection, the battery status, the screen brightness,
  * the weather, and the date and outputs a line on standard ouput
- * which can be processes by lemonbar. It tries to be low on system
- * resources.
+ * which can be processes by lemonbar.
  *
  * The program does not take any commandline arguments.
  *
@@ -65,8 +64,6 @@ static int	mail_file();
 static char    *mail_info(int fd);
 static char    *clock_info();
 static void	output_status();
-
-enum infos { INFO_MAIL, INFO_BATTERY, INFO_CLOCK, INFO_ARRAY_SIZE };
 
 
 static int
@@ -114,7 +111,7 @@ battery_info()
 	case APM_AC_OFF:
 	        minutes = info.minutes_left;
 		if (minutes < 0)
-			n = strlcpy(str, "??:??", BATT_INFO_BUFLEN);
+			n = strlcpy(str, "--:--", BATT_INFO_BUFLEN);
 		else
 			n = snprintf(str, BATT_INFO_BUFLEN, "%d:%02d",
 			    minutes / 60, minutes % 60);
@@ -215,6 +212,7 @@ output_status(char *infos[], int len)
 }
 
 #define EVENTS 3
+enum infos { INFO_MAIL, INFO_BATTERY, INFO_CLOCK, INFO_ARRAY_SIZE };
 enum timer_ids { CLOCK_TIMER, BATTERY_TIMER };
 
 int
