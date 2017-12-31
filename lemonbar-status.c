@@ -35,11 +35,16 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <machine/apmvar.h>
-/* room for net includes */
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <netinet/if_ether.h>
+#include <net/if_trunk.h>
+#include <netinet/in.h>
 
 #include <errno.h>
 #include <err.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
 #include <paths.h>
 #include <stdio.h>
 #include <string.h>
@@ -47,14 +52,19 @@
 #include <unistd.h>
 
 
+#define IFNAME "trunk0"
+#define APM_DEV_PATH "/dev/apm"
+
+#define NORMAL_COLOR "%{F#DDDDDD}"
+#define MAIL_COLOR "%{F#FFFF00}"
+
 #define BATT_INFO_BUFLEN 13
 #define MAILPATH_BUFLEN 256
 #define DATE_BUFLEN 18
-#define APM_DEV_PATH "/dev/apm"
-#define NORMAL_COLOR "%{F#DDDDDD}"
-#define MAIL_COLOR "%{F#FFFF00}"
-#define CLOCK_INTERVAL 10 * 1000
-#define BATTERY_INTERVAL 10 * 1000
+
+#define CLOCK_INTERVAL (10 * 1000)
+#define BATTERY_INTERVAL (10 * 1000)
+#define NETWORK_INTERVAL (10 * 1000)
 
 
 static int	open_socket(const char *);
@@ -196,6 +206,116 @@ clock_info()
 	return str;
 }
 
+/* Network */
+
+char *
+network_info()
+{
+	static char str[IFNAMSIZ + 1 + INET6_ADDRSTRLEN];
+	struct ifaddrs *ifap, *ifa;
+	struct ifreq ifr;
+	struct trunk_reqall ra;
+	struct trunk_reqport *rp, rpbuf[TRUNK_MAX_PORTS];
+	char *res = NULL;
+	void *addrp;
+	int i, s, len;
+
+	rp = NULL;
+
+	if (getifaddrs(&ifap)) {
+		warn("cannot get network interfaces");
+		return res;
+	}
+
+	ifa = ifap;
+	while (ifa && strncmp(IFNAME, ifa->ifa_name, sizeof(IFNAME) - 1))
+		ifa = ifa->ifa_next;
+
+	if (ifa == NULL) {
+		warnx("interface " IFNAME " not found");
+		freeifaddrs(ifap);
+		return res;
+	}
+
+	if ((s = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+		warn("could not open socket");
+		freeifaddrs(ifap);
+		return res;
+	}
+
+	/* Trunk ports */
+
+	strlcpy(ra.ra_ifname, IFNAME, sizeof(ra.ra_ifname));
+	ra.ra_size = sizeof(rpbuf);
+	ra.ra_port = rpbuf;
+
+	if (ioctl(s, SIOCGTRUNK, &ra)) {
+		warn("could not query trunk properties");
+		goto cleanup;
+	}
+
+	if (!(ra.ra_proto & TRUNK_PROTO_FAILOVER)) {
+		warnx("trunk protocol is not 'failover'");
+		goto cleanup;
+	}
+
+	for (i = 0; i < ra.ra_ports; i++)
+		if (rpbuf[i].rp_flags & TRUNK_PORT_ACTIVE) {
+			rp = &rpbuf[i];
+			break;
+		}
+
+	if (rp == NULL) {
+		warnx("no active trunk port found");
+		goto cleanup;
+	}
+
+
+	/* IP address */
+
+	ifr.ifr_addr.sa_family = AF_INET;
+	strlcpy(ifr.ifr_name, ifa->ifa_name, sizeof(ifr.ifr_name));
+	if (ioctl(s, SIOCGIFADDR, &ifr) == -1) {
+		warn("could not query inet address");
+		goto cleanup;
+	}
+
+	switch (ifr.ifr_addr.sa_family) {
+	case AF_INET:
+		addrp = &((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr;
+		break;
+	case AF_INET6:
+		addrp = &((struct sockaddr_in6 *)&ifr.ifr_addr)->sin6_addr;
+		break;
+	default:
+		warnx("unknown inet address protocol");
+		goto cleanup;
+	}
+
+	
+	/* Output */
+
+	strlcpy(str, rp->rp_portname, sizeof(str));
+
+	len = strnlen(rp->rp_portname, IFNAMSIZ);
+	str[len] = ' ';
+
+	if (inet_ntop(ifr.ifr_addr.sa_family, addrp,
+	    str + len + 1, sizeof(str) - len - 1) == NULL) {
+		warn("could not convert inet address");
+		goto cleanup;
+	}
+
+	res = str;
+
+cleanup:
+	close(s);
+	freeifaddrs(ifap);
+	return res;
+}
+
+
+
 static void
 output_status(char *infos[], int len)
 {
@@ -211,9 +331,11 @@ output_status(char *infos[], int len)
 	fputs("\n", stdout);
 }
 
-#define EVENTS 3
-enum infos { INFO_MAIL, INFO_BATTERY, INFO_CLOCK, INFO_ARRAY_SIZE };
-enum timer_ids { CLOCK_TIMER, BATTERY_TIMER };
+#define EVENTS 4
+
+enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_CLOCK,
+    INFO_ARRAY_SIZE };
+enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER };
 
 int
 main()
@@ -229,6 +351,7 @@ main()
 	infos[INFO_MAIL] = mail_info(mail_fd);
 	infos[INFO_CLOCK] = clock_info();
 	infos[INFO_BATTERY] = battery_info();
+	infos[INFO_NETWORK] = network_info();
 
 	output_status(infos, INFO_ARRAY_SIZE);
 
@@ -240,6 +363,8 @@ main()
 	    CLOCK_INTERVAL, NULL);
 	EV_SET(&kev[2], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    BATTERY_INTERVAL, NULL);
+	EV_SET(&kev[3], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    NETWORK_INTERVAL, NULL);
 	kevent(kq, kev, EVENTS, NULL, 0, NULL);
 
 	for (;;) {
@@ -263,6 +388,10 @@ main()
 					    BATTERY_TIMER)
 						infos[INFO_BATTERY] =
 						    battery_info();
+					else if (kev[i].ident ==
+					    NETWORK_TIMER)
+						infos[INFO_NETWORK] =
+						    network_info();
 				}
 			}
 		output_status(infos, INFO_ARRAY_SIZE);
