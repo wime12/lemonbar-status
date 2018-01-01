@@ -390,17 +390,20 @@ main()
 					infos[INFO_MAIL] =
 					    mail_info(mail_fd);
 				else if (kev[i].filter == EVFILT_TIMER) {
-					if (kev[i].ident == CLOCK_TIMER)
+					switch (kev[i].ident) {
+					case CLOCK_TIMER:
 						infos[INFO_CLOCK] =
 						    clock_info();
-					else if (kev[i].ident ==
-					    BATTERY_TIMER)
+						break;
+					case BATTERY_TIMER:
 						infos[INFO_BATTERY] =
 						    battery_info();
-					else if (kev[i].ident ==
-					    NETWORK_TIMER)
+						break;
+					case NETWORK_TIMER:
 						infos[INFO_NETWORK] =
 						    network_info();
+						break;
+					}
 				}
 			}
 		output_status(infos, INFO_ARRAY_SIZE);
