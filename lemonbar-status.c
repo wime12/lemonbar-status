@@ -360,16 +360,20 @@ main()
 	output_status(infos, INFO_ARRAY_SIZE);
 
 	if ((kq = kqueue()) < 0)
-		err(1, NULL);
-	EV_SET(&kev[0], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
-	    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
-	EV_SET(&kev[1], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+		err(1, "cannot create kqueue");
+	EV_SET(&kev[0], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    CLOCK_INTERVAL, NULL);
-	EV_SET(&kev[2], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	EV_SET(&kev[1], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    BATTERY_INTERVAL, NULL);
-	EV_SET(&kev[3], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	EV_SET(&kev[2], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    NETWORK_INTERVAL, NULL);
-	kevent(kq, kev, EVENTS, NULL, 0, NULL);
+	kevent(kq, kev, 3, NULL, 0, NULL);
+
+	if (mail_fd >= 0) {
+		EV_SET(&kev[0], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+		    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
+		kevent(kq, kev, 1, NULL, 0, NULL);
+	}
 
 	for (;;) {
 		nev = kevent(kq, NULL, 0, kev, EVENTS, NULL);
