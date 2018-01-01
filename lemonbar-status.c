@@ -55,6 +55,8 @@
 
 #define IFNAME "trunk0"
 #define APM_DEV_PATH "/dev/apm"
+#define DATE_FORMAT "%a %b %d, %R"
+#define MAIL_TEXT "MAIL"
 
 #define NORMAL_COLOR "%{F#DDDDDD}"
 #define MAIL_COLOR "%{F#FFFF00}"
@@ -124,6 +126,7 @@ battery_info()
 
 	n = -1;
 	switch (info.ac_state) {
+
 	case APM_AC_OFF:
 	        minutes = info.minutes_left;
 		if (minutes < 0)
@@ -132,6 +135,7 @@ battery_info()
 			n = snprintf(str, BATT_INFO_BUFLEN, "%d:%02d",
 			    minutes / 60, minutes % 60);
 		/* FALLTHROUGH */
+
 	case APM_AC_ON:
 		if (n < 0)
 			n = strlcpy(str, "A/C", BATT_INFO_BUFLEN);
@@ -140,6 +144,7 @@ battery_info()
 		    info.battery_life);
 		return str;
 		break;
+
 	default:
 		return NULL;
 	}
@@ -196,7 +201,7 @@ mail_info(int fd)
 	}
 
 	if (timespec_later(&st.st_mtim, &st.st_atim))
-		return MAIL_COLOR "MAIL" NORMAL_COLOR;
+		return MAIL_COLOR MAIL_TEXT NORMAL_COLOR;
 	else
 		return NULL;
 }
@@ -221,7 +226,7 @@ clock_info()
 		return NULL;
 	}
 
-	strftime(str, sizeof(str), "%a %b %d, %R", &ltime);
+	strftime(str, sizeof(str), DATE_FORMAT, &ltime);
 
 	return str;
 }
