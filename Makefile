@@ -14,4 +14,4 @@ $(TARGET)-debug: $(SRC)
 	cc -g -o $(TARGET) $(SRC)
 
 clean:
-	rm -rf $(TARGET) *.o *.s
+	rm -rf $(TARGET) *.o *.s a.out

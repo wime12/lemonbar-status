@@ -45,6 +45,7 @@
 #include <err.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
+#include <inttypes.h>
 #include <paths.h>
 #include <stdio.h>
 #include <string.h>
@@ -385,7 +386,7 @@ main()
 					errx(1, "%s",
 					    strerror(kev[i].data));
 				else if (kev[i].filter == EVFILT_VNODE &&
-				    kev[i].ident == mail_fd)
+				    kev[i].ident == (uintptr_t)mail_fd)
 					infos[INFO_MAIL] =
 					    mail_info(mail_fd);
 				else if (kev[i].filter == EVFILT_TIMER) {
