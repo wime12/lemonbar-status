@@ -162,17 +162,19 @@ mail_file()
 {
 	char mail_path[MAILPATH_BUFLEN];
 	char *user;
-	int mail_fd;
+	int mail_fd = -1;
 
 	strlcpy(mail_path, _PATH_MAILDIR "/", MAILPATH_BUFLEN);
 
-	if ((user = getlogin()) == NULL)
-	    err(1, "cannot get user's login name");
+	if ((user = getlogin()) == NULL) {
+		warn("cannot get user's login name");
+		return mail_fd;
+	}
 
 	strlcat(mail_path, user, MAILPATH_BUFLEN);
 
 	if ((mail_fd = open(mail_path, O_RDONLY)) < 0)
-		err(1, "cannot open %s", mail_path);
+		warn("cannot open %s", mail_path);
 
 	return mail_fd;
 }
@@ -182,8 +184,15 @@ mail_info(int fd)
 {
     	struct stat st;
 
-	if (fstat(fd, &st) < 0)
+	if (fd < 0) {
+	    	warn("invalid mail file descriptor");
+		return NULL;
+	}
+
+	if (fstat(fd, &st) < 0) {
 		err(1, "cannot get mail box status");
+		return NULL;
+	}
 
 	if (timespec_later(&st.st_mtim, &st.st_atim))
 		return MAIL_COLOR "MAIL" NORMAL_COLOR;
