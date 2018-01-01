@@ -382,28 +382,40 @@ main()
 			err(1, NULL);
 		else if (nev > 0)
 			for (i = 0; i < nev; i++) {
+
 				if (kev[i].flags & EV_ERROR)
 					errx(1, "%s",
 					    strerror(kev[i].data));
-				else if (kev[i].filter == EVFILT_VNODE &&
-				    kev[i].ident == (uintptr_t)mail_fd)
-					infos[INFO_MAIL] =
-					    mail_info(mail_fd);
-				else if (kev[i].filter == EVFILT_TIMER) {
+
+				switch (kev[i].filter) {
+
+				case EVFILT_VNODE:
+					if (kev[i].ident ==
+					    (uintptr_t)mail_fd)
+						infos[INFO_MAIL] =
+						    mail_info(mail_fd);
+					break;
+
+				case EVFILT_TIMER:
+
 					switch (kev[i].ident) {
+
 					case CLOCK_TIMER:
 						infos[INFO_CLOCK] =
 						    clock_info();
 						break;
+
 					case BATTERY_TIMER:
 						infos[INFO_BATTERY] =
 						    battery_info();
 						break;
+
 					case NETWORK_TIMER:
 						infos[INFO_NETWORK] =
 						    network_info();
 						break;
 					}
+					break;
 				}
 			}
 		output_status(infos, INFO_ARRAY_SIZE);
