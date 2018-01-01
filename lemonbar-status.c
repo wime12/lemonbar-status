@@ -76,6 +76,7 @@ static int	timespec_later(struct timespec *, struct timespec *);
 static int	mail_file();
 static char    *mail_info(int fd);
 static char    *clock_info();
+static char    *network_info();
 static void	output_status();
 
 
