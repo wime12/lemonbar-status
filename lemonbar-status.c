@@ -108,13 +108,18 @@ battery_info()
 	int minutes, n, fd, state;
 
 	fd = open(APM_DEV_PATH, O_RDONLY);
-	if (fd == -1)
-		err(1, "cannot open " APM_DEV_PATH);
+	if (fd == -1) {
+		warn("cannot open " APM_DEV_PATH);
+		return NULL;
+	}
 
 	state = ioctl(fd, APM_IOC_GETPOWER, &info);
 	close(fd);
 
-	if (state < 0) err(1, "cannot read battery info");
+	if (state < 0) {
+		warn("cannot read battery info");
+		return NULL;
+	}
 
 	n = -1;
 	switch (info.ac_state) {
@@ -302,6 +307,7 @@ static void
 output_status(char *infos[], int len)
 {
 	int i;
+	fputs(NORMAL_COLOR "%{r}", stdout);
 
 	for (i = 0; i < len; i++) {
 		if (infos[i] == NULL)
@@ -311,6 +317,7 @@ output_status(char *infos[], int len)
 			fputs(" | ", stdout);
 	}
 	fputs("\n", stdout);
+	fflush(stdout);
 }
 
 #define EVENTS 4

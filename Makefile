@@ -1,9 +1,17 @@
 SRC=lemonbar-status.c
 TARGET=lemonbar-status
 
-all: $(TARGET)
+all: strip
+
+strip: $(TARGET)
+	strip $(TARGET)
 
 $(TARGET): $(SRC)
 
+debug: $(TARGET)-debug
+
+$(TARGET)-debug: $(SRC)
+	cc -g -o $(TARGET) $(SRC)
+
 clean:
-	rm -rf .o lemonbar-status
+	rm -rf $(TARGET) *.o *.s
