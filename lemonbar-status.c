@@ -202,8 +202,7 @@ clock_info()
 	if (localtime_r(&clock, &ltime) == NULL)
 		err(1, "cannot convert to localtime");
 	strftime(str, DATE_BUFLEN, "%a %b %d, %R", &ltime);
-
-	return str;
+return str;
 }
 
 /* Network */
@@ -211,7 +210,9 @@ clock_info()
 char *
 network_info()
 {
-	static char str[IFNAMSIZ + 1 + INET6_ADDRSTRLEN];
+	static char str[IFNAMSIZ + 1 +
+	    ((INET6_ADDRSTRLEN) > (INET_ADDRSTRLEN) ?
+	     (INET6_ADDRSTRLEN) : (INET_ADDRSTRLEN))];
 	struct ifreq ifr;
 	struct trunk_reqall ra;
 	struct trunk_reqport *rp, rpbuf[TRUNK_MAX_PORTS];
@@ -256,7 +257,6 @@ network_info()
 
 	/* IP address */
 
-	ifr.ifr_addr.sa_family = AF_INET;
 	strlcpy(ifr.ifr_name, IFNAME, sizeof(ifr.ifr_name));
 	if (ioctl(s, SIOCGIFADDR, &ifr) == -1) {
 		warn("could not query inet address");
