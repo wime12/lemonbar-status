@@ -190,7 +190,7 @@ mail_info(int fd)
 	}
 
 	if (fstat(fd, &st) < 0) {
-		err(1, "cannot get mail box status");
+		warn("cannot get mail box status");
 		return NULL;
 	}
 
