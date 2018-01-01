@@ -210,13 +210,19 @@ clock_info()
 	struct tm ltime;
 	time_t clock;
 
-	if ((clock = time(NULL)) < 0)
-		err(1, "cannot get time");
+	if ((clock = time(NULL)) < 0) {
+		warn("cannot get time");
+		return NULL;
+	}
 
-	if (localtime_r(&clock, &ltime) == NULL)
-		err(1, "cannot convert to localtime");
-	strftime(str, DATE_BUFLEN, "%a %b %d, %R", &ltime);
-return str;
+	if (localtime_r(&clock, &ltime) == NULL) {
+		warn("cannot convert to localtime");
+		return NULL;
+	}
+
+	strftime(str, sizeof(str), "%a %b %d, %R", &ltime);
+
+	return str;
 }
 
 /* Network */
