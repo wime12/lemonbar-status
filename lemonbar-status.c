@@ -420,7 +420,9 @@ main()
 			}
 		output_status(infos, INFO_ARRAY_SIZE);
 	}
-	close(mail_fd);
+
+	if (mail_fd >= 0)
+	    close(mail_fd);
 
 	return 0;
 }
