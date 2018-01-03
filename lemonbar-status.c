@@ -84,10 +84,7 @@ static int	mail_file();
 static char    *mail_info(int fd);
 static char    *clock_info();
 static char    *network_info();
-<<<<<<< HEAD
-=======
 static char    *brightness_info();
->>>>>>> brightness
 static void	output_status();
 
 
