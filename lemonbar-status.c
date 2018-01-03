@@ -47,6 +47,7 @@
 #include <ifaddrs.h>
 #include <inttypes.h>
 #include <paths.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -513,6 +514,23 @@ cleanup_1:
 	return res;
 }
 
+void
+brightness_event_loop(xcb_connection_t *conn, xcb_window_t root)
+{
+	xcb_generic_event_t *evt;
+
+	xcb_randr_select_input(conn, root,
+	    XCB_RANDR_NOTIFY_MASK_OUTPUT_PROPERTY |
+	    XCB_RANDR_NOTIFY_MASK_OUTPUT_CHANGE);
+
+	xcb_flush(conn);
+
+	while ((evt = xcb_wait_for_event(conn)) != NULL) {
+		kill(getpid(), SIGUSR1);
+		free(evt);
+	}
+}
+
 
 static void
 output_status(char *infos[], int len)
@@ -550,7 +568,7 @@ main()
 	xcb_randr_output_t randr_output;
 	struct kevent kev[EVENTS];
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success;
-
+	
 	bzero(infos, INFO_ARRAY_SIZE);
 
 	mail_fd = mail_file();
@@ -586,9 +604,11 @@ main()
 	}
 	
 	if (brightness_init_success) {
+		signal(SIGUSR1, SIG_IGN);
 		EV_SET(&kev[0], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
 		    BRIGHTNESS_INTERVAL, NULL);
-		kevent(kq, kev, 1, NULL, 0, NULL);
+		EV_SET(&kev[1], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+		kevent(kq, kev, 2, NULL, 0, NULL);
 	}
 
 	for (;;) {
@@ -639,7 +659,16 @@ main()
 						break;
 					}
 					break;
+
+				case EVFILT_SIGNAL:
+					switch (kev[i].ident) {
+					case SIGUSR1:
+						warnx("SIGUSR1 received");
+						break;
+					}
+					break;
 				}
+
 			}
 		output_status(infos, INFO_ARRAY_SIZE);
 	}
