@@ -531,6 +531,21 @@ brightness_event_loop(xcb_connection_t *conn, xcb_window_t root)
 	}
 }
 
+struct brightness_event_loop_args
+{
+	xcb_connection_t *conn;
+	xcb_window_t root;
+};
+
+void *
+brightness_event_loop_thread_start(struct brightness_event_loop_args *args)
+{
+	brightness_event_loop(args->conn, args->root);
+
+	return NULL;
+}
+
+
 
 static void
 output_status(char *infos[], int len)
@@ -567,6 +582,8 @@ main()
 	xcb_atom_t backlight_atom;
 	xcb_randr_output_t randr_output;
 	struct kevent kev[EVENTS];
+	pthread_t brightness_event_loop_thread;
+	struct brightness_event_loop_args bel_args;
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success;
 	
 	bzero(infos, INFO_ARRAY_SIZE);
@@ -609,6 +626,10 @@ main()
 		    BRIGHTNESS_INTERVAL, NULL);
 		EV_SET(&kev[1], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
 		kevent(kq, kev, 2, NULL, 0, NULL);
+		bel_args.conn = display_connection;
+		bel_args.root = root_window;
+		pthread_create(&brightness_event_loop_thread, NULL,
+		    (void *(*)(void *))brightness_event_loop_thread_start, &bel_args);
 	}
 
 	for (;;) {
@@ -663,7 +684,12 @@ main()
 				case EVFILT_SIGNAL:
 					switch (kev[i].ident) {
 					case SIGUSR1:
-						warnx("SIGUSR1 received");
+						infos[INFO_BRIGHTNESS] =
+						    brightness_info(
+							display_connection,
+							randr_output,
+							backlight_atom,
+							brightness_range);
 						break;
 					}
 					break;

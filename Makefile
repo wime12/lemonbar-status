@@ -3,7 +3,7 @@ TARGET=lemonbar-status
 DEBUGTARGET=$(TARGET)-debug
 INCLUDES=-I/usr/X11R6/include
 LIBPATHS=-L/usr/X11R6/lib
-LIBS=-lxcb -lxcb-randr
+LIBS=-lxcb -lxcb-randr -lpthread
 CHECKFLAGS=-Wall
 
 all: strip
