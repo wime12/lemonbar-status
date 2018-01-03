@@ -334,14 +334,14 @@ cleanup:
 
 /* Brightness */
 
-char *
-brightness_info()
+int
+brightness_init(xcb_connection_t **conn_out, xcb_window_t *root_out,
+    xcb_atom_t *backlight_atom_out, xcb_randr_output_t *output_out,
+    int *range_out)
 {
-    	static char str[BRIGHTNESS_BUFLEN];
-	char *res = NULL;
+	xcb_generic_error_t *error = NULL;
 	xcb_connection_t *conn = NULL;
 	xcb_randr_query_version_reply_t *ver_reply = NULL;
-	xcb_generic_error_t *error = NULL;
 	xcb_intern_atom_reply_t *backlight_reply = NULL;
 	xcb_atom_t backlight_atom;
 	xcb_screen_t *screen = NULL;
@@ -349,30 +349,29 @@ brightness_info()
 	xcb_screen_iterator_t iter;
 	xcb_randr_get_screen_resources_reply_t *resources_reply = NULL;
 	xcb_randr_output_t *outputs = NULL;
-	xcb_randr_get_output_property_reply_t *prop_reply = NULL;
 	xcb_randr_get_output_info_reply_t *output_info_reply = NULL;
 	xcb_randr_query_output_property_reply_t *prop_query_reply = NULL;
-	int default_screen, i;
-	int32_t *limits, cur;
+	int default_screen, i, res = 0;
+	int32_t *limits;
 
 	conn = xcb_connect(NULL, &default_screen);
 	if (xcb_connection_has_error(conn)) {
 		warnx("cannot connect do display");
-		fflush(stderr);
+		xcb_disconnect(conn);
+		conn = NULL;
 		goto cleanup_1;
 	}
+	*conn_out = conn;
 
 	ver_reply = xcb_randr_query_version_reply(conn,
 		xcb_randr_query_version(conn, 1, 2), &error);
 	if (error != NULL || ver_reply == NULL) {
 		warnx("cannot query RandR version");
-		fflush(stderr);
 		goto cleanup_1;
 	}
 	if (ver_reply->major_version != 1 || ver_reply->minor_version < 2) {
 		warnx("RandR version %d.%d is too old",
 		    ver_reply->major_version, ver_reply->minor_version);
-		fflush(stderr);
 		goto cleanup_2;
 	}
 
@@ -383,12 +382,13 @@ brightness_info()
 		warnx("cannot intern backlight atom");
 		goto cleanup_2;
 	}
-	backlight_atom = backlight_reply->atom;
+        backlight_atom = backlight_reply->atom;
 
 	if (backlight_atom == XCB_NONE) {
 		warnx("no outputs have backlight property");
 		goto cleanup_3;
 	}
+	*backlight_atom_out = backlight_atom;
 
 	iter = xcb_setup_roots_iterator(xcb_get_setup(conn));
 	i = default_screen;
@@ -403,7 +403,7 @@ brightness_info()
 		warnx("no root window found");
 		goto cleanup_3;
 	}
-	root = screen->root;
+	*root_out = root = screen->root;
 
 	resources_reply = xcb_randr_get_screen_resources_reply(conn,
 	    xcb_randr_get_screen_resources(conn, root), &error);
@@ -426,27 +426,16 @@ brightness_info()
 		    xcb_randr_get_output_info_name_length(output_info_reply))
 		    != 0) {
 			free(output_info_reply);
+			output_info_reply = NULL;
 			continue;
 		}
 		break;
 	}
-
-	prop_reply = xcb_randr_get_output_property_reply( conn,
-		xcb_randr_get_output_property(conn, outputs[i],
-		    backlight_atom, XCB_ATOM_NONE, 0, 4, 0, 0),
-		    &error);
-	if (error != NULL || prop_reply == NULL) {
-	    warnx("cannot get output backlight property");
-	    goto cleanup_5;
+	if (output_info_reply == NULL) {
+	    warn("RandR output " OUTPUT_NAME "not found");
+	    goto cleanup_4;
 	}
-	if (prop_reply->type != XCB_ATOM_INTEGER ||
-	    prop_reply->num_items != 1 ||
-	    prop_reply->format != 32) {
-		warnx("could not get current brightness");
-		goto cleanup_6;
-	}
-	cur = *((int32_t *)
-	    xcb_randr_get_output_property_data(prop_reply));
+	*output_out = outputs[i];
 
 	prop_query_reply =
 	    xcb_randr_query_output_property_reply(conn,
@@ -454,30 +443,23 @@ brightness_info()
 		    backlight_atom), &error);
 	if (error != NULL || prop_query_reply == NULL) {
 		warnx("cannot query brightness limit propery");
-		goto cleanup_6;
+		goto cleanup_4;
 	}
 	if (prop_query_reply->range == 0 ||
 	    xcb_randr_query_output_property_valid_values_length(
 		prop_query_reply) != 2) {
 		warnx("could not get brightness min and max values");
-		goto cleanup_7;
+		goto cleanup_5;
 	}
 	limits = xcb_randr_query_output_property_valid_values(
-		prop_query_reply);
+	    prop_query_reply);
+	*range_out = limits[1] - limits[0];
 
-	snprintf(str, sizeof(str), "%d%%",
-	    cur * 100 / (limits[1] - limits[0]));
-	res = str;
-
-cleanup_7:
-	free(prop_query_reply);
-
-cleanup_6:
-	free(prop_reply);
+	res = 1;
 
 cleanup_5:
-	free(output_info_reply);
-
+	free(prop_query_reply);
+	
 cleanup_4:
 	free(resources_reply);
 
@@ -488,10 +470,48 @@ cleanup_2:
 	free(ver_reply);
 
 cleanup_1:
-	xcb_disconnect(conn);
+	if (!res)
+		xcb_disconnect(conn);
 	return res;
 }
 
+
+char *
+brightness_info(xcb_connection_t *conn, xcb_randr_output_t output,
+    xcb_atom_t backlight_atom, int range)
+{
+    	static char str[BRIGHTNESS_BUFLEN];
+	xcb_generic_error_t *error = NULL;
+	xcb_randr_get_output_property_reply_t *prop_reply = NULL;
+	char *res = NULL;
+	int cur;
+
+	prop_reply = xcb_randr_get_output_property_reply(conn,
+	    xcb_randr_get_output_property(conn, output, backlight_atom,
+		XCB_ATOM_NONE, 0, 4, 0, 0),
+	    &error);
+	if (error != NULL || prop_reply == NULL) {
+	    warnx("cannot get output backlight property");
+	    goto cleanup_1;
+	}
+	if (prop_reply->type != XCB_ATOM_INTEGER ||
+	    prop_reply->num_items != 1 ||
+	    prop_reply->format != 32) {
+		warnx("cannot not get current brightness");
+		goto cleanup_2;
+	}
+	cur = *((int32_t *)
+	    xcb_randr_get_output_property_data(prop_reply));
+
+	snprintf(str, sizeof(str), "%d%%", cur * 100 / range);
+	res = str;
+
+cleanup_2:
+	free(prop_reply);
+
+cleanup_1:
+	return res;
+}
 
 
 static void
@@ -524,18 +544,28 @@ int
 main()
 {
 	char *infos[INFO_ARRAY_SIZE];
+	xcb_connection_t *display_connection;
+	xcb_window_t root_window;
+	xcb_atom_t backlight_atom;
+	xcb_randr_output_t randr_output;
 	struct kevent kev[EVENTS];
-	int mail_fd, kq, nev, i;
+	int mail_fd, kq, nev, i, brightness_range, brightness_init_success;
 
 	bzero(infos, INFO_ARRAY_SIZE);
 
 	mail_fd = mail_file();
 
+	brightness_init_success = brightness_init(&display_connection,
+	    &root_window, &backlight_atom, &randr_output,
+	    &brightness_range);
+
 	infos[INFO_MAIL] = mail_info(mail_fd);
 	infos[INFO_CLOCK] = clock_info();
 	infos[INFO_BATTERY] = battery_info();
 	infos[INFO_NETWORK] = network_info();
-	infos[INFO_BRIGHTNESS] = brightness_info();
+	infos[INFO_BRIGHTNESS] = brightness_init_success ?
+	    brightness_info(display_connection, randr_output,
+	    backlight_atom, brightness_range) : NULL;
 
 	output_status(infos, INFO_ARRAY_SIZE);
 
@@ -547,13 +577,17 @@ main()
 	    BATTERY_INTERVAL, NULL);
 	EV_SET(&kev[2], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    NETWORK_INTERVAL, NULL);
-	EV_SET(&kev[3], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    BRIGHTNESS_INTERVAL, NULL);
 	kevent(kq, kev, EVENTS - 1, NULL, 0, NULL);
 
 	if (mail_fd >= 0) {
 		EV_SET(&kev[0], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
 		    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
+		kevent(kq, kev, 1, NULL, 0, NULL);
+	}
+	
+	if (brightness_init_success) {
+		EV_SET(&kev[0], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
+		    BRIGHTNESS_INTERVAL, NULL);
 		kevent(kq, kev, 1, NULL, 0, NULL);
 	}
 
@@ -597,7 +631,11 @@ main()
 						break;
 					case BRIGHTNESS_TIMER:
 						infos[INFO_BRIGHTNESS] =
-						    brightness_info();
+						    brightness_info(
+							display_connection,
+							randr_output,
+							backlight_atom,
+							brightness_range);
 						break;
 					}
 					break;
