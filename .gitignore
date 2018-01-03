@@ -1,4 +1,5 @@
 lemonbar-status
+lemonbar-status-debug
 *.o
 .*.swp
 old
