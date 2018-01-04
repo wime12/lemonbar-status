@@ -21,7 +21,8 @@
  * the weather, and the date and outputs a line on standard ouput
  * which can be processes by lemonbar.
  *
- * The program does not take any commandline arguments.
+ * The program does not take any commandline arguments and is not
+ * configurable.
  *
  * If it is appropriate, the program waits for events from the information
  * sources. Otherwise the information is polled at regular intervals.
