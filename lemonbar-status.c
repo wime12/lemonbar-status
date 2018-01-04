@@ -699,15 +699,13 @@ main()
 	    backlight_atom, brightness_range) : NULL;
 	infos[INFO_WEATHER] = weather_info();
 
-	printf("next clock event: %d ms\n", clock_update);
-
 	output_status(infos);
 
 	if ((kq = kqueue()) < 0)
 		err(1, "cannot create kqueue");
 	n = 0;
 	EV_SET(&kev_in[n++], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    (int64_t)clock_update, NULL);
+	    clock_update, NULL);
 	EV_SET(&kev_in[n++], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    BATTERY_INTERVAL, NULL);
 	EV_SET(&kev_in[n++], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
@@ -741,10 +739,8 @@ main()
 		n = 0;
 		if (nev == -1)
 			err(1, NULL);
-		else if (nev == 0) {
-			warnx("timeout in kqueue?");
+		else if (nev == 0)
 			continue;
-		}
 		else
 			for (i = 0; i < nev; i++) {
 
@@ -757,17 +753,13 @@ main()
 				case EVFILT_VNODE:
 
 					if (kev[i].ident ==
-					    (uintptr_t)mail_fd) {
-						puts("mail event");
+					    (uintptr_t)mail_fd)
 						infos[INFO_MAIL] =
 						    mail_info(mail_fd);
-					}
 					else if (kev[i].ident ==
-					    (uintptr_t)weather_fd) {
-						puts("wather event");
+					    (uintptr_t)weather_fd)
 						infos[INFO_WEATHER] =
 						    weather_info();
-					}
 					break;
 
 				case EVFILT_TIMER:
@@ -778,7 +770,6 @@ main()
 						infos[INFO_CLOCK] =
 							clock_info(
 							    &clock_update);
-						printf("next clock event: %d ms\n", clock_update);
 						EV_SET(&kev_in[n++],
 						    CLOCK_TIMER,
 						    EVFILT_TIMER, EV_DELETE,
@@ -786,24 +777,21 @@ main()
 						EV_SET(&kev_in[n++],
 						    CLOCK_TIMER,
 						    EVFILT_TIMER, EV_ADD, 0,
-						    (int64_t)clock_update,
+						    clock_update,
 						    NULL);
 						break;
 
 					case BATTERY_TIMER:
-						puts("battery event");
 						infos[INFO_BATTERY] =
 						    battery_info();
 						break;
 
 					case NETWORK_TIMER:
-						puts("network event");
 						infos[INFO_NETWORK] =
 						    network_info();
 						break;
 
 					case BRIGHTNESS_TIMER:
-						puts("brightness event");
 						infos[INFO_BRIGHTNESS] =
 						    brightness_info(
 							display_connection,
@@ -817,7 +805,6 @@ main()
 				case EVFILT_SIGNAL:
 					switch (kev[i].ident) {
 					case SIGUSR1:
-						puts("brightness event");
 						infos[INFO_BRIGHTNESS] =
 						    brightness_info(
 							display_connection,
