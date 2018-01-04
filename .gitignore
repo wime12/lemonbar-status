@@ -1,5 +1,6 @@
 lemonbar-status
 lemonbar-status-debug
 *.o
+*.core
 .*.swp
 old
