@@ -57,12 +57,16 @@
 #include <xcb/xcb.h>
 #include <xcb/randr.h>
 
+#include <json-c/json.h>
+
 
 #define IFNAME "trunk0"
 #define APM_DEV_PATH "/dev/apm"
 #define DATE_FORMAT "%a %b %d, %R"
 #define MAIL_TEXT "MAIL"
 #define OUTPUT_NAME "eDP1"
+#define WEATHER_CURRENT_FILENAME "/home/wilfried/.cache/weather/current"
+#define WEATHER_TIMESTAMP_FILENAME "/home/wilfried/.cache/weather/timestamp"
 
 #define NORMAL_COLOR "%{F#DDDDDD}"
 #define MAIL_COLOR "%{F#FFFF00}"
@@ -71,11 +75,19 @@
 #define MAILPATH_BUFLEN 256
 #define DATE_BUFLEN 18
 #define BRIGHTNESS_BUFLEN 5
+#define WEATHER_BUFLEN 32
 
 #define CLOCK_INTERVAL (10 * 1000)
 #define BATTERY_INTERVAL (10 * 1000)
 #define NETWORK_INTERVAL (10 * 1000)
 #define BRIGHTNESS_INTERVAL (10 * 1000)
+
+
+enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_BRIGHTNESS,
+    INFO_WEATHER, INFO_CLOCK, INFO_ARRAY_SIZE };
+
+enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
+    BRIGHTNESS_TIMER };
 
 
 static int	open_socket(const char *);
@@ -545,15 +557,90 @@ brightness_event_loop_thread_start(struct brightness_event_loop_args *args)
 	return NULL;
 }
 
+/* Weather */
+
+int weather_file() {
+	int fd;
+
+	fd = open(WEATHER_TIMESTAMP_FILENAME, O_RDONLY);
+	if (fd < 0)
+		warn("cannot open " WEATHER_TIMESTAMP_FILENAME);
+
+	return fd;
+}
+
+char *
+weather_info()
+{
+	static char str[WEATHER_BUFLEN], *strp, *ret;
+	struct json_object *obj, *new_obj, *iter_obj;
+	int i, len, buflen, n;
+
+	strp = str;
+	ret = NULL;
+	buflen = WEATHER_BUFLEN;
+
+	if ((obj = json_object_from_file(WEATHER_CURRENT_FILENAME))
+	    == NULL) {
+		warnx("could not load JSON file");
+		goto cleanup_1;
+	}
+
+	if (!json_object_object_get_ex(obj, "main", &new_obj)) {
+		warnx("could not find 'main'");
+		goto cleanup_2;
+	}
+	if (!json_object_object_get_ex(new_obj, "temp", &new_obj)) {
+		warnx("could not find 'main.temp'");
+		goto cleanup_2;
+	}
+	n = snprintf(strp, buflen, "%.0f °C",
+	    json_object_get_double(new_obj));
+
+	if (!json_object_object_get_ex(obj, "weather", &new_obj)) {
+		warnx("could not find 'weather'");
+		goto cleanup_2;
+	}
+	if (!json_object_is_type(new_obj, json_type_array)) {
+		warnx("'weather' is not an array");
+		goto cleanup_2;
+	}
+	len = json_object_array_length(new_obj);
+	for (i = 0; i < len; i++) {
+		iter_obj = json_object_array_get_idx(new_obj, i);
+		if (!json_object_is_type(iter_obj, json_type_object)) {
+			warnx("weather[%d] is not an object", i);
+			goto cleanup_2;
+		}
+		json_object_object_get_ex(iter_obj, "description",
+		    &iter_obj);
+		if (!json_object_is_type(iter_obj, json_type_string)) {
+			warnx("weather[%d].description is not a string", i);
+			goto cleanup_2;
+		}
+		strp += n;
+		buflen -= n;
+		n = snprintf(strp, buflen, ", %s",
+		    json_object_get_string(iter_obj));
+	}
+
+	ret = str;
+
+cleanup_2:
+	json_object_put(obj);
+
+cleanup_1:
+	return ret;
+}
 
 
 static void
-output_status(char *infos[], int len)
+output_status(char *infos[])
 {
 	int i;
 	fputs(NORMAL_COLOR "%{r}", stdout);
 
-	for (i = 0; i < len; i++) {
+	for (i = 0; i < INFO_ARRAY_SIZE; i++) {
 		if (infos[i] == NULL)
 			continue;
 		fputs(infos[i], stdout);
@@ -561,7 +648,7 @@ output_status(char *infos[], int len)
 		break;
 	}
 
-	for (; i < len; i++) {
+	for (; i < INFO_ARRAY_SIZE; i++) {
 		if (infos[i] == NULL)
 			continue;
 		fputs(" | ", stdout);
@@ -572,11 +659,6 @@ output_status(char *infos[], int len)
 }
 
 #define EVENTS 5
-
-enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_BRIGHTNESS,
-    INFO_CLOCK, INFO_ARRAY_SIZE };
-enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
-    BRIGHTNESS_TIMER };
 
 int
 main()
@@ -589,11 +671,13 @@ main()
 	struct kevent kev[EVENTS];
 	pthread_t brightness_event_loop_thread;
 	struct brightness_event_loop_args bel_args;
-	int mail_fd, kq, nev, i, brightness_range, brightness_init_success;
+	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
+	    weather_fd;
 	
-	bzero(infos, INFO_ARRAY_SIZE);
+	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
 
 	mail_fd = mail_file();
+	weather_fd = weather_file();
 
 	brightness_init_success = brightness_init(&display_connection,
 	    &root_window, &backlight_atom, &randr_output,
@@ -606,8 +690,9 @@ main()
 	infos[INFO_BRIGHTNESS] = brightness_init_success ?
 	    brightness_info(display_connection, randr_output,
 	    backlight_atom, brightness_range) : NULL;
+	infos[INFO_WEATHER] = weather_info();
 
-	output_status(infos, INFO_ARRAY_SIZE);
+	output_status(infos);
 
 	if ((kq = kqueue()) < 0)
 		err(1, "cannot create kqueue");
@@ -617,7 +702,9 @@ main()
 	    BATTERY_INTERVAL, NULL);
 	EV_SET(&kev[2], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    NETWORK_INTERVAL, NULL);
-	kevent(kq, kev, EVENTS - 1, NULL, 0, NULL);
+        EV_SET(&kev[3], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    BRIGHTNESS_INTERVAL, NULL);
+	kevent(kq, kev, 4, NULL, 0, NULL);
 
 	if (mail_fd >= 0) {
 		EV_SET(&kev[0], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
@@ -635,6 +722,12 @@ main()
 		    (void *(*)(void *))brightness_event_loop_thread_start, &bel_args);
 	}
 
+	if (weather_fd >= 0) {
+		EV_SET(&kev[0], weather_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+		    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
+		kevent(kq, kev, 1, NULL, 0, NULL);
+	}
+
 	for (;;) {
 		nev = kevent(kq, NULL, 0, kev, EVENTS, NULL);
 		if (nev == -1)
@@ -649,10 +742,15 @@ main()
 				switch (kev[i].filter) {
 
 				case EVFILT_VNODE:
+
 					if (kev[i].ident ==
 					    (uintptr_t)mail_fd)
 						infos[INFO_MAIL] =
 						    mail_info(mail_fd);
+					else if (kev[i].ident ==
+					    (uintptr_t)weather_fd)
+						infos[INFO_WEATHER] =
+						    weather_info();
 					break;
 
 				case EVFILT_TIMER:
@@ -673,6 +771,15 @@ main()
 						infos[INFO_NETWORK] =
 						    network_info();
 						break;
+
+					case BRIGHTNESS_TIMER:
+						infos[INFO_BRIGHTNESS] =
+						    brightness_info(
+							display_connection,
+							randr_output,
+							backlight_atom,
+							brightness_range);
+						break;
 					}
 					break;
 
@@ -691,7 +798,7 @@ main()
 				}
 
 			}
-		output_status(infos, INFO_ARRAY_SIZE);
+		output_status(infos);
 	}
 
 	if (mail_fd >= 0)

@@ -1,9 +1,9 @@
 SRC=lemonbar-status.c
 TARGET=lemonbar-status
 DEBUGTARGET=$(TARGET)-debug
-INCLUDES=-I/usr/X11R6/include
-LIBPATHS=-L/usr/X11R6/lib
-LIBS=-lxcb -lxcb-randr -lpthread
+INCLUDES=-I/usr/X11R6/include -I/usr/local/include
+LIBPATHS=-L/usr/X11R6/lib -L/usr/local/lib
+LIBS=-lxcb -lxcb-randr -ljson-c -lpthread
 CHECKFLAGS=-Wall
 
 all: strip
