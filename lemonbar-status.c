@@ -232,11 +232,14 @@ mail_info(int fd)
 /* Clock */
 
 static char *
-clock_info()
+clock_info(int *next_update)
 {
 	static char str[DATE_BUFLEN];
 	struct tm ltime;
 	time_t clock;
+
+	if (next_update)
+	    *next_update = 10 * 1000;
 
 	if ((clock = time(NULL)) < 0) {
 		warn("cannot get time");
@@ -247,6 +250,9 @@ clock_info()
 		warn("cannot convert to localtime");
 		return NULL;
 	}
+
+	if (next_update)
+		*next_update = (60 - ltime.tm_sec) * 1000;
 
 	strftime(str, sizeof(str), DATE_FORMAT, &ltime);
 
@@ -658,7 +664,7 @@ output_status(char *infos[])
 	fflush(stdout);
 }
 
-#define EVENTS 5
+#define EVENTS 8
 
 int
 main()
@@ -668,11 +674,12 @@ main()
 	xcb_window_t root_window;
 	xcb_atom_t backlight_atom;
 	xcb_randr_output_t randr_output;
-	struct kevent kev[EVENTS];
+	struct kevent kev_in[EVENTS], kev[EVENTS];
 	pthread_t brightness_event_loop_thread;
 	struct brightness_event_loop_args bel_args;
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
-	    weather_fd;
+	    weather_fd, clock_update, n;
+
 	
 	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
 
@@ -684,7 +691,7 @@ main()
 	    &brightness_range);
 
 	infos[INFO_MAIL] = mail_info(mail_fd);
-	infos[INFO_CLOCK] = clock_info();
+	infos[INFO_CLOCK] = clock_info(&clock_update);
 	infos[INFO_BATTERY] = battery_info();
 	infos[INFO_NETWORK] = network_info();
 	infos[INFO_BRIGHTNESS] = brightness_init_success ?
@@ -692,47 +699,53 @@ main()
 	    backlight_atom, brightness_range) : NULL;
 	infos[INFO_WEATHER] = weather_info();
 
+	printf("next clock event: %d ms\n", clock_update);
+
 	output_status(infos);
 
 	if ((kq = kqueue()) < 0)
 		err(1, "cannot create kqueue");
-	EV_SET(&kev[0], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    CLOCK_INTERVAL, NULL);
-	EV_SET(&kev[1], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	n = 0;
+	EV_SET(&kev_in[n++], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    (int64_t)clock_update, NULL);
+	EV_SET(&kev_in[n++], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    BATTERY_INTERVAL, NULL);
-	EV_SET(&kev[2], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	EV_SET(&kev_in[n++], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    NETWORK_INTERVAL, NULL);
-        EV_SET(&kev[3], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
+        EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    BRIGHTNESS_INTERVAL, NULL);
-	kevent(kq, kev, 4, NULL, 0, NULL);
 
 	if (mail_fd >= 0) {
-		EV_SET(&kev[0], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
 		    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
-		kevent(kq, kev, 1, NULL, 0, NULL);
 	}
 	
 	if (brightness_init_success) {
 		signal(SIGUSR1, SIG_IGN);
-		EV_SET(&kev[0], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-		kevent(kq, kev, 1, NULL, 0, NULL);
+		EV_SET(&kev_in[n++], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0,
+		    NULL);
 		bel_args.conn = display_connection;
 		bel_args.root = root_window;
 		pthread_create(&brightness_event_loop_thread, NULL,
-		    (void *(*)(void *))brightness_event_loop_thread_start, &bel_args);
+		    (void *(*)(void *))brightness_event_loop_thread_start,
+		    &bel_args);
 	}
 
 	if (weather_fd >= 0) {
-		EV_SET(&kev[0], weather_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
-		    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
-		kevent(kq, kev, 1, NULL, 0, NULL);
+		EV_SET(&kev_in[n++], weather_fd, EVFILT_VNODE,
+		    EV_ADD | EV_CLEAR, NOTE_WRITE, 0, NULL);
 	}
 
 	for (;;) {
-		nev = kevent(kq, NULL, 0, kev, EVENTS, NULL);
+		nev = kevent(kq, kev_in, n, kev, EVENTS, NULL);
+		n = 0;
 		if (nev == -1)
 			err(1, NULL);
-		else if (nev > 0)
+		else if (nev == 0) {
+			warnx("timeout in kqueue?");
+			continue;
+		}
+		else
 			for (i = 0; i < nev; i++) {
 
 				if (kev[i].flags & EV_ERROR)
@@ -744,13 +757,17 @@ main()
 				case EVFILT_VNODE:
 
 					if (kev[i].ident ==
-					    (uintptr_t)mail_fd)
+					    (uintptr_t)mail_fd) {
+						puts("mail event");
 						infos[INFO_MAIL] =
 						    mail_info(mail_fd);
+					}
 					else if (kev[i].ident ==
-					    (uintptr_t)weather_fd)
+					    (uintptr_t)weather_fd) {
+						puts("wather event");
 						infos[INFO_WEATHER] =
 						    weather_info();
+					}
 					break;
 
 				case EVFILT_TIMER:
@@ -759,20 +776,34 @@ main()
 
 					case CLOCK_TIMER:
 						infos[INFO_CLOCK] =
-						    clock_info();
+							clock_info(
+							    &clock_update);
+						printf("next clock event: %d ms\n", clock_update);
+						EV_SET(&kev_in[n++],
+						    CLOCK_TIMER,
+						    EVFILT_TIMER, EV_DELETE,
+						    0, 0, NULL);
+						EV_SET(&kev_in[n++],
+						    CLOCK_TIMER,
+						    EVFILT_TIMER, EV_ADD, 0,
+						    (int64_t)clock_update,
+						    NULL);
 						break;
 
 					case BATTERY_TIMER:
+						puts("battery event");
 						infos[INFO_BATTERY] =
 						    battery_info();
 						break;
 
 					case NETWORK_TIMER:
+						puts("network event");
 						infos[INFO_NETWORK] =
 						    network_info();
 						break;
 
 					case BRIGHTNESS_TIMER:
+						puts("brightness event");
 						infos[INFO_BRIGHTNESS] =
 						    brightness_info(
 							display_connection,
@@ -786,6 +817,7 @@ main()
 				case EVFILT_SIGNAL:
 					switch (kev[i].ident) {
 					case SIGUSR1:
+						puts("brightness event");
 						infos[INFO_BRIGHTNESS] =
 						    brightness_info(
 							display_connection,
