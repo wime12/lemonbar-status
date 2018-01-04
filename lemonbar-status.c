@@ -90,21 +90,35 @@ enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_BRIGHTNESS,
 enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
     BRIGHTNESS_TIMER };
 
+struct brightness_event_loop_args
+{
+	xcb_connection_t *conn;
+	xcb_window_t root;
+};
 
-static int	open_socket(const char *);
+
+void		brightness_event_loop(xcb_connection_t *, xcb_window_t);
+void	       *brightness_event_loop_thread_start(struct
+    brightness_event_loop_args *);
+static char    *brightness_info(xcb_connection_t *, xcb_randr_output_t,
+    xcb_atom_t, int);
+int		brightness_init(xcb_connection_t **, xcb_window_t *,
+    xcb_atom_t *, xcb_randr_output_t *, int *);
 static char    *battery_info();
-static int	timespec_later(struct timespec *, struct timespec *);
+static char    *clock_info();
 static int	mail_file();
 static char    *mail_info(int fd);
-static char    *clock_info();
+static int	open_socket(const char *);
+static void	output_status(char **);
 static char    *network_info();
-static char    *brightness_info();
-static void	output_status();
+static int	timespec_later(struct timespec *, struct timespec *);
+int		weather_file();
+char	       *weather_info();
 
 
 static int
 open_socket(const char *sockname)
-{
+    {
 	struct sockaddr_un s_un;
 	int errr, sock;
 
@@ -549,12 +563,6 @@ brightness_event_loop(xcb_connection_t *conn, xcb_window_t root)
 		free(evt);
 	}
 }
-
-struct brightness_event_loop_args
-{
-	xcb_connection_t *conn;
-	xcb_window_t root;
-};
 
 void *
 brightness_event_loop_thread_start(struct brightness_event_loop_args *args)
