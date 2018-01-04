@@ -76,7 +76,7 @@
 #define MAILPATH_BUFLEN 256
 #define DATE_BUFLEN 18
 #define BRIGHTNESS_BUFLEN 5
-#define WEATHER_BUFLEN 32
+#define WEATHER_BUFLEN 48
 
 #define CLOCK_INTERVAL (10 * 1000)
 #define BATTERY_INTERVAL (10 * 1000)
@@ -719,16 +719,17 @@ main()
 	    BATTERY_INTERVAL, NULL);
 	EV_SET(&kev_in[n++], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    NETWORK_INTERVAL, NULL);
-        EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    BRIGHTNESS_INTERVAL, NULL);
 
 	if (mail_fd >= 0) {
-		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
-		    NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB, 0, NULL);
+		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE,
+		EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
+		0, NULL);
 	}
 	
 	if (brightness_init_success) {
 		signal(SIGUSR1, SIG_IGN);
+		EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD,
+		    0, BRIGHTNESS_INTERVAL, NULL);
 		EV_SET(&kev_in[n++], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0,
 		    NULL);
 		bel_args.conn = display_connection;
