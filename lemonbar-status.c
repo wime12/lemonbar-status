@@ -553,16 +553,21 @@ output_status(char *infos[], int len)
 	int i;
 	fputs(NORMAL_COLOR "%{r}", stdout);
 
-	/* TODO: Correct for the case when the last element is NULL */
-
 	for (i = 0; i < len; i++) {
 		if (infos[i] == NULL)
 			continue;
 		fputs(infos[i], stdout);
-		if (i < len - 1)
-			fputs(" | ", stdout);
+		i++;
+		break;
 	}
-	fputs("\n", stdout);
+
+	for (; i < len; i++) {
+		if (infos[i] == NULL)
+			continue;
+		fputs(" | ", stdout);
+		fputs(infos[i], stdout);
+	}
+	putc('\n', stdout);
 	fflush(stdout);
 }
 
@@ -622,10 +627,8 @@ main()
 	
 	if (brightness_init_success) {
 		signal(SIGUSR1, SIG_IGN);
-		EV_SET(&kev[0], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD, 0,
-		    BRIGHTNESS_INTERVAL, NULL);
-		EV_SET(&kev[1], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-		kevent(kq, kev, 2, NULL, 0, NULL);
+		EV_SET(&kev[0], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+		kevent(kq, kev, 1, NULL, 0, NULL);
 		bel_args.conn = display_connection;
 		bel_args.root = root_window;
 		pthread_create(&brightness_event_loop_thread, NULL,
@@ -669,14 +672,6 @@ main()
 					case NETWORK_TIMER:
 						infos[INFO_NETWORK] =
 						    network_info();
-						break;
-					case BRIGHTNESS_TIMER:
-						infos[INFO_BRIGHTNESS] =
-						    brightness_info(
-							display_connection,
-							randr_output,
-							backlight_atom,
-							brightness_range);
 						break;
 					}
 					break;
