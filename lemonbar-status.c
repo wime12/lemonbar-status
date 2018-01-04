@@ -32,6 +32,7 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
+#include <sys/audioio.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -63,6 +64,9 @@
 
 #define IFNAME "trunk0"
 #define APM_DEV_PATH "/dev/apm"
+#define MIXER_DEV_PATH "/dev/mixer"
+#define MIXER_DEVICE_CLASS "outputs"
+#define MIXER_DEVICE "master"
 #define DATE_FORMAT "%a %b %d, %R"
 #define MAIL_TEXT "MAIL"
 #define OUTPUT_NAME "eDP1"
@@ -77,18 +81,20 @@
 #define DATE_BUFLEN 18
 #define BRIGHTNESS_BUFLEN 5
 #define WEATHER_BUFLEN 48
+#define AUDIO_BUFLEN 8
 
 #define CLOCK_INTERVAL (10 * 1000)
 #define BATTERY_INTERVAL (10 * 1000)
 #define NETWORK_INTERVAL (10 * 1000)
 #define BRIGHTNESS_INTERVAL (10 * 1000)
+#define AUDIO_INTERVAL (10 * 1000)
 
 
 enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_BRIGHTNESS,
-    INFO_WEATHER, INFO_CLOCK, INFO_ARRAY_SIZE };
+    INFO_AUDIO, INFO_WEATHER, INFO_CLOCK, INFO_ARRAY_SIZE };
 
 enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
-    BRIGHTNESS_TIMER };
+    BRIGHTNESS_TIMER, AUDIO_TIMER };
 
 struct brightness_event_loop_args
 {
@@ -97,6 +103,8 @@ struct brightness_event_loop_args
 };
 
 
+char	       *audio_info();
+int		audio_init();
 void		brightness_event_loop(xcb_connection_t *, xcb_window_t);
 void	       *brightness_event_loop_thread_start(struct
     brightness_event_loop_args *);
@@ -649,6 +657,98 @@ cleanup_1:
 }
 
 
+/* Audio */
+
+int
+audio_init()
+{
+	struct mixer_devinfo devinfo;
+	int fd, class_index, device_index;
+
+	device_index = -1;
+	class_index = -1;
+
+	fd = open(MIXER_DEV_PATH, O_RDONLY);
+	if (fd == -1) {
+		warn("cannot open " MIXER_DEV_PATH);
+		goto cleanup_1;
+	}
+
+	for (devinfo.index = 0;
+	    ioctl(fd, AUDIO_MIXER_DEVINFO, &devinfo) != -1;
+	    devinfo.index++) {
+		if (strncmp(MIXER_DEVICE_CLASS, devinfo.label.name,
+		    sizeof(MIXER_DEVICE_CLASS)) == 0 &&
+		    devinfo.type == AUDIO_MIXER_CLASS) {
+			if (class_index == -1)
+				class_index = devinfo.index;
+			else {
+				warnx("duplicate mixer device class entry "
+				    MIXER_DEVICE_CLASS);
+				goto cleanup_2;
+			}
+		} else if (strncmp(MIXER_DEVICE, devinfo.label.name,
+		    sizeof(MIXER_DEVICE)) == 0 &&
+		    devinfo.type == AUDIO_MIXER_VALUE) {
+			if (device_index == -1)
+				device_index = devinfo.index;
+			else {
+				warnx("duplicate mixer device entry"
+				    MIXER_DEVICE);
+				goto cleanup_2;
+			}
+		}
+	}
+	if (class_index == -1 || device_index == -1) {
+		warnx("mixer device " MIXER_DEVICE_CLASS "." MIXER_DEVICE
+		    " not found");
+		device_index = -1;
+		goto cleanup_2;
+	}
+
+cleanup_2:
+	close(fd);
+
+cleanup_1:
+	return device_index;
+}
+
+char *
+audio_info(int mixer_device)
+{
+	static char str[AUDIO_BUFLEN], *res;
+	int fd;
+	mixer_ctrl_t value;
+
+	res = NULL;
+
+	fd = open(MIXER_DEV_PATH, O_RDONLY);
+	if (fd == -1) {
+		warn("cannot open " MIXER_DEV_PATH);
+		goto cleanup_1;
+	}
+
+	value.dev = mixer_device;
+	value.type = AUDIO_MIXER_VALUE;
+	value.un.value.num_channels = 2;
+	if (ioctl(fd, AUDIO_MIXER_READ, &value) < 0) {
+		warn("cannot get mixer values");
+		goto cleanup_2;
+	}
+	snprintf(str, AUDIO_BUFLEN, "%d:%d", value.un.value.level[0],
+	    value.un.value.level[1]);
+
+	res = str;
+
+cleanup_2:
+	close(fd);
+
+cleanup_1:
+	return res;
+}
+
+
+
 static void
 output_status(char *infos[])
 {
@@ -687,7 +787,7 @@ main()
 	pthread_t brightness_event_loop_thread;
 	struct brightness_event_loop_args bel_args;
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
-	    weather_fd, clock_update, n;
+	    weather_fd, clock_update, n, mixer_device;
 
 	
 	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
@@ -699,6 +799,8 @@ main()
 	    &root_window, &backlight_atom, &randr_output,
 	    &brightness_range);
 
+	mixer_device = audio_init();
+
 	infos[INFO_MAIL] = mail_info(mail_fd);
 	infos[INFO_CLOCK] = clock_info(&clock_update);
 	infos[INFO_BATTERY] = battery_info();
@@ -707,6 +809,8 @@ main()
 	    brightness_info(display_connection, randr_output,
 	    backlight_atom, brightness_range) : NULL;
 	infos[INFO_WEATHER] = weather_info();
+	infos[INFO_AUDIO] = mixer_device < 0 ?
+	    NULL : audio_info(mixer_device);
 
 	output_status(infos);
 
@@ -739,10 +843,13 @@ main()
 		    &bel_args);
 	}
 
-	if (weather_fd >= 0) {
+	if (mixer_device > 0)
+		EV_SET(&kev_in[n++], AUDIO_TIMER, EVFILT_TIMER, EV_ADD,
+		    0, AUDIO_INTERVAL, NULL);
+
+	if (weather_fd >= 0)
 		EV_SET(&kev_in[n++], weather_fd, EVFILT_VNODE,
 		    EV_ADD | EV_CLEAR, NOTE_WRITE, 0, NULL);
-	}
 
 	for (;;) {
 		nev = kevent(kq, kev_in, n, kev, EVENTS, NULL);
@@ -808,6 +915,11 @@ main()
 							randr_output,
 							backlight_atom,
 							brightness_range);
+						break;
+					case AUDIO_TIMER:
+						infos[INFO_AUDIO] =
+						    audio_info(
+							mixer_device);
 						break;
 					}
 					break;
