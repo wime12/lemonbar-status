@@ -62,11 +62,13 @@
 #include <json-c/json.h>
 
 
+/* TODO: Do not hardcode the home directory. */
 #define IFNAME "trunk0"
 #define APM_DEV_PATH "/dev/apm"
 #define MIXER_DEV_PATH "/dev/mixer"
 #define MIXER_DEVICE_CLASS "outputs"
 #define MIXER_DEVICE "master"
+#define MIXER_MUTE_DEVICE "mute"
 #define DATE_FORMAT "%a %b %d, %R"
 #define MAIL_TEXT "MAIL"
 #define OUTPUT_NAME "eDP1"
@@ -108,8 +110,8 @@ struct brightness_event_loop_args
 };
 
 
-char	       *audio_info();
-int		audio_init();
+char	       *audio_info(int, int);
+int		audio_init(int *, int *);
 int		audio_print_volume(char *, size_t, int);
 void		brightness_event_loop(xcb_connection_t *, xcb_window_t,
     int);
@@ -383,6 +385,8 @@ cleanup:
 
 /* Brightness */
 
+/* TODO: rename brightness_init() to x_init() */
+
 int
 brightness_init(xcb_connection_t **conn_out, xcb_window_t *root_out,
     xcb_atom_t *backlight_atom_out, xcb_randr_output_t *output_out,
@@ -571,6 +575,7 @@ cleanup_1:
 	return res;
 }
 
+/* TODO: rename brightness_event_loop() to x_event_loop() */
 void
 brightness_event_loop(xcb_connection_t *conn, xcb_window_t root,
     int randr_event_base)
@@ -600,6 +605,7 @@ brightness_event_loop(xcb_connection_t *conn, xcb_window_t root,
 	}
 }
 
+/* TODO: rename brightness_event_loop_thread_start() to x_event_loop_start() */
 void *
 brightness_event_loop_thread_start(struct brightness_event_loop_args *args)
 {
@@ -688,13 +694,13 @@ cleanup_1:
 /* Audio */
 
 int
-audio_init()
+audio_init(int *mixer_device_index, int *mute_device_index)
 {
 	struct mixer_devinfo devinfo;
-	int fd, class_index, device_index;
+	int fd, class_index, ret;
 
-	device_index = -1;
-	class_index = -1;
+	ret = 0;
+	class_index = *mixer_device_index = *mute_device_index = -1;
 
 	fd = open(MIXER_DEV_PATH, O_RDONLY);
 	if (fd == -1) {
@@ -705,55 +711,72 @@ audio_init()
 	for (devinfo.index = 0;
 	    ioctl(fd, AUDIO_MIXER_DEVINFO, &devinfo) != -1;
 	    devinfo.index++) {
-		/* puts(devinfo.label.name); */
 		if (strncmp(MIXER_DEVICE_CLASS, devinfo.label.name,
 		    sizeof(MIXER_DEVICE_CLASS)) == 0 &&
 		    devinfo.type == AUDIO_MIXER_CLASS) {
-			if (class_index == -1)
-				class_index = devinfo.index;
-			else {
-				warnx("duplicate mixer device class entry "
-				    MIXER_DEVICE_CLASS);
-				goto cleanup_2;
-			}
-		} else if (strncmp(MIXER_DEVICE, devinfo.label.name,
-		    sizeof(MIXER_DEVICE)) == 0 &&
-		    devinfo.type == AUDIO_MIXER_VALUE) {
-			if (device_index == -1)
-				device_index = devinfo.index;
-			else {
-				warnx("duplicate mixer device entry"
-				    MIXER_DEVICE);
-				goto cleanup_2;
-			}
+			class_index = devinfo.index;
+			break;
 		}
 	}
-	if (class_index == -1 || device_index == -1) {
-		warnx("mixer device " MIXER_DEVICE_CLASS "." MIXER_DEVICE
+	if (class_index == -1) {
+		warnx("mixer device class " MIXER_DEVICE_CLASS
 		    " not found");
-		device_index = -1;
 		goto cleanup_2;
 	}
+
+	for (devinfo.index = 0;
+	    ioctl(fd, AUDIO_MIXER_DEVINFO, &devinfo) != -1;
+	    devinfo.index++) {
+		if (strncmp(MIXER_DEVICE, devinfo.label.name,
+		    sizeof(MIXER_DEVICE)) == 0 &&
+		    devinfo.type == AUDIO_MIXER_VALUE) {
+			*mixer_device_index = devinfo.index;
+			break;
+		}
+	}
+	if (*mixer_device_index == -1) {
+		warnx("mixer device " MIXER_DEVICE_CLASS "."
+		    MIXER_DEVICE " not found");
+		goto cleanup_2;
+	}
+
+	for (devinfo.index = devinfo.next;
+	    devinfo.next != AUDIO_MIXER_LAST &&
+	    ioctl(fd, AUDIO_MIXER_DEVINFO, &devinfo) != -1;
+	    devinfo.index = devinfo.next) {
+		if (strncmp(MIXER_MUTE_DEVICE, devinfo.label.name,
+		    sizeof(MIXER_MUTE_DEVICE)) == 0 &&
+		    devinfo.type == AUDIO_MIXER_ENUM) {
+			*mute_device_index = devinfo.index;
+			break;
+		}
+	}
+	if (*mute_device_index == -1) {
+		warnx("mute device " MIXER_DEVICE_CLASS "."
+		    MIXER_DEVICE "." MIXER_MUTE_DEVICE " not found");
+		goto cleanup_2;
+	}
+
+	ret = 1;
 
 cleanup_2:
 	close(fd);
 
 cleanup_1:
-	return device_index;
+	return ret;
 }
 
 char *
-audio_info(int mixer_device)
+audio_info(int mixer_device, int mute_device)
 {
 	static char str[AUDIO_BUFLEN], *res, *strp;
-	int fd, n;
+	int fd, n, muted;
 	size_t buflen;
-	u_char left, right;
+	int left, right;
 	mixer_ctrl_t value;
 
-	/* TODO: Respect mute state */
-
 	res = NULL;
+	left = right = -1;
 
 	fd = open(MIXER_DEV_PATH, O_RDONLY);
 	if (fd == -1) {
@@ -761,15 +784,25 @@ audio_info(int mixer_device)
 		goto cleanup_1;
 	}
 
-	value.dev = mixer_device;
-	value.type = AUDIO_MIXER_VALUE;
-	value.un.value.num_channels = 2;
+	value.dev = mute_device;
+	value.type = AUDIO_MIXER_ENUM;
 	if (ioctl(fd, AUDIO_MIXER_READ, &value) < 0) {
-		warn("cannot get mixer values");
+		warn("cannot get mixer mute state");
 		goto cleanup_2;
 	}
-	left = value.un.value.level[0];
-	right = value.un.value.level[1];
+	muted = value.un.ord;
+
+	if (!muted) {
+		value.dev = mixer_device;
+		value.type = AUDIO_MIXER_VALUE;
+		value.un.value.num_channels = 2;
+		if (ioctl(fd, AUDIO_MIXER_READ, &value) < 0) {
+			warn("cannot get mixer values");
+			goto cleanup_2;
+		}
+		left = (int)value.un.value.level[0];
+		right = (int)value.un.value.level[1];
+	}
 
 	strp = str;
 	buflen = sizeof(str);
@@ -796,12 +829,14 @@ cleanup_1:
 int
 audio_print_volume(char *str, size_t buflen, int vol)
 {
-	if (vol <= 0)
+	if (vol < AUDIO_MIN_GAIN)
 		return strlcpy(str, "_", buflen);
-	else if (vol >= 255)
+	else if (vol >= AUDIO_MAX_GAIN)
 		return strlcpy(str, "M", buflen);
 	else
-		return snprintf(str, buflen, "%d", (int)(vol / 2.55));
+		return snprintf(str, buflen, "%d",
+		    (int)(vol / ((AUDIO_MAX_GAIN - AUDIO_MIN_GAIN)
+			/ 100.0)));
 }
 
 
@@ -843,7 +878,8 @@ main()
 	pthread_t brightness_event_loop_thread;
 	struct brightness_event_loop_args bel_args;
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
-	    weather_fd, clock_update, n, mixer_device, randr_event_base;
+	    weather_fd, clock_update, n, mixer_device, mute_device,
+	    randr_event_base, audio_init_success;
 
 	
 	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
@@ -855,7 +891,7 @@ main()
 	    &root_window, &backlight_atom, &randr_output, &randr_event_base,
 	    &brightness_range);
 
-	mixer_device = audio_init();
+	audio_init_success = audio_init(&mixer_device, &mute_device);
 
 	infos[INFO_MAIL] = mail_info(mail_fd);
 	infos[INFO_CLOCK] = clock_info(&clock_update);
@@ -865,8 +901,8 @@ main()
 	    brightness_info(display_connection, randr_output,
 		backlight_atom, brightness_range) : NULL;
 	infos[INFO_WEATHER] = weather_info();
-	infos[INFO_AUDIO] = mixer_device < 0 ?
-	    NULL : audio_info(mixer_device);
+	infos[INFO_AUDIO] = audio_init_success ?
+	    audio_info(mixer_device, mute_device) : NULL;
 
 	output_status(infos);
 
@@ -900,7 +936,7 @@ main()
 		    &bel_args);
 	}
 
-	if (mixer_device > 0) {
+	if (audio_init_success) {
 		signal(SIGUSR2, SIG_IGN);
 		EV_SET(&kev_in[n++], AUDIO_TIMER, EVFILT_TIMER, EV_ADD,
 		    0, AUDIO_INTERVAL, NULL);
@@ -980,7 +1016,8 @@ main()
 					case AUDIO_TIMER:
 						infos[INFO_AUDIO] =
 						    audio_info(
-							mixer_device);
+							mixer_device,
+							mute_device);
 						break;
 					}
 					break;
@@ -998,7 +1035,8 @@ main()
 					case SIGUSR2:
 						infos[INFO_AUDIO] =
 						    audio_info(
-							mixer_device);
+							mixer_device,
+							mute_device);
 						break;
 					}
 					break;
@@ -1007,6 +1045,8 @@ main()
 			}
 		output_status(infos);
 	}
+
+	/* TODO: Clean up at exit */
 
 	if (mail_fd >= 0)
 	    close(mail_fd);
