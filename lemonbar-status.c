@@ -882,6 +882,8 @@ main()
 	    randr_event_base, audio_init_success;
 
 	
+	/* Initialization and first ouput */
+	
 	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
 
 	mail_fd = mail_file();
@@ -905,6 +907,9 @@ main()
 	    audio_info(mixer_device, mute_device) : NULL;
 
 	output_status(infos);
+
+
+	/* Prepare the kqueue events */
 
 	if ((kq = kqueue()) < 0)
 		err(1, "cannot create kqueue");
@@ -947,6 +952,9 @@ main()
 	if (weather_fd >= 0)
 		EV_SET(&kev_in[n++], weather_fd, EVFILT_VNODE,
 		    EV_ADD | EV_CLEAR, NOTE_WRITE, 0, NULL);
+
+	
+	/* Start the queue event loop */
 
 	for (;;) {
 		nev = kevent(kq, kev_in, n, kev, EVENTS, NULL);
