@@ -71,3 +71,7 @@ information cannot be displayed.
 The enumeration `infos` determines the output sequence and also
 the size of the `infos` array in `main()` where the strings
 returned by the `*_info()` functions are stored.
+
+## Remarks
+
+The program grabs the XF86AudioMute, XF86AudioLowerVolume and XF86AudioRaiseVolume keys. Therefore applications will not receive those keys. This is my personal preference. But it can be changed in the X event loop with the `xcb_allow_events()` function.
