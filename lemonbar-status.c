@@ -110,6 +110,7 @@ struct brightness_event_loop_args
 
 char	       *audio_info();
 int		audio_init();
+int		audio_print_volume(char *, size_t, int);
 void		brightness_event_loop(xcb_connection_t *, xcb_window_t,
     int);
 void	       *brightness_event_loop_thread_start(struct
@@ -744,8 +745,10 @@ cleanup_1:
 char *
 audio_info(int mixer_device)
 {
-	static char str[AUDIO_BUFLEN], *res;
-	int fd;
+	static char str[AUDIO_BUFLEN], *res, *strp;
+	int fd, n;
+	size_t buflen;
+	u_char left, right;
 	mixer_ctrl_t value;
 
 	/* TODO: Respect mute state */
@@ -765,8 +768,21 @@ audio_info(int mixer_device)
 		warn("cannot get mixer values");
 		goto cleanup_2;
 	}
-	snprintf(str, AUDIO_BUFLEN, "%d:%d", value.un.value.level[0],
-	    value.un.value.level[1]);
+	left = value.un.value.level[0];
+	right = value.un.value.level[1];
+
+	strp = str;
+	buflen = sizeof(str);
+
+	n = audio_print_volume(strp, buflen, left);
+	strp += n;
+	buflen -= n;
+
+	n = strlcpy(strp, ":", buflen);
+	strp += n;
+	buflen -= n;
+
+	n = audio_print_volume(strp, buflen, right);
 
 	res = str;
 
@@ -777,6 +793,16 @@ cleanup_1:
 	return res;
 }
 
+int
+audio_print_volume(char *str, size_t buflen, int vol)
+{
+	if (vol <= 0)
+		return strlcpy(str, "_", buflen);
+	else if (vol >= 255)
+		return strlcpy(str, "M", buflen);
+	else
+		return snprintf(str, buflen, "%d", (int)(vol / 2.55));
+}
 
 
 static void
