@@ -76,6 +76,10 @@
 #define NORMAL_COLOR "%{F#DDDDDD}"
 #define MAIL_COLOR "%{F#FFFF00}"
 
+#define AUDIO_MUTE_KEYCODE 160
+#define AUDIO_DOWN_KEYCODE 174
+#define AUDIO_UP_KEYCODE 176
+
 #define BATT_INFO_BUFLEN 13
 #define MAILPATH_BUFLEN 256
 #define DATE_BUFLEN 18
@@ -100,18 +104,20 @@ struct brightness_event_loop_args
 {
 	xcb_connection_t *conn;
 	xcb_window_t root;
+	int event_base;
 };
 
 
 char	       *audio_info();
 int		audio_init();
-void		brightness_event_loop(xcb_connection_t *, xcb_window_t);
+void		brightness_event_loop(xcb_connection_t *, xcb_window_t,
+    int);
 void	       *brightness_event_loop_thread_start(struct
     brightness_event_loop_args *);
 static char    *brightness_info(xcb_connection_t *, xcb_randr_output_t,
     xcb_atom_t, int);
 int		brightness_init(xcb_connection_t **, xcb_window_t *,
-    xcb_atom_t *, xcb_randr_output_t *, int *);
+    xcb_atom_t *, xcb_randr_output_t *, int *, int *);
 static char    *battery_info();
 static char    *clock_info();
 static int	mail_file();
@@ -379,10 +385,11 @@ cleanup:
 int
 brightness_init(xcb_connection_t **conn_out, xcb_window_t *root_out,
     xcb_atom_t *backlight_atom_out, xcb_randr_output_t *output_out,
-    int *range_out)
+    int *randr_event_base, int *range_out)
 {
 	xcb_generic_error_t *error = NULL;
 	xcb_connection_t *conn = NULL;
+	const xcb_query_extension_reply_t *randr_data;
 	xcb_randr_query_version_reply_t *ver_reply = NULL;
 	xcb_intern_atom_reply_t *backlight_reply = NULL;
 	xcb_atom_t backlight_atom;
@@ -404,6 +411,14 @@ brightness_init(xcb_connection_t **conn_out, xcb_window_t *root_out,
 		goto cleanup_1;
 	}
 	*conn_out = conn;
+
+	randr_data = xcb_get_extension_data(conn, &xcb_randr_id);
+	if (!randr_data->present) {
+		warnx("cannot find RandR extension");
+		goto cleanup_2;
+	}
+	if (randr_event_base)
+		*randr_event_base = randr_data->first_event;
 
 	ver_reply = xcb_randr_query_version_reply(conn,
 		xcb_randr_query_version(conn, 1, 2), &error);
@@ -556,7 +571,8 @@ cleanup_1:
 }
 
 void
-brightness_event_loop(xcb_connection_t *conn, xcb_window_t root)
+brightness_event_loop(xcb_connection_t *conn, xcb_window_t root,
+    int randr_event_base)
 {
 	xcb_generic_event_t *evt;
 
@@ -564,10 +580,21 @@ brightness_event_loop(xcb_connection_t *conn, xcb_window_t root)
 	    XCB_RANDR_NOTIFY_MASK_OUTPUT_PROPERTY |
 	    XCB_RANDR_NOTIFY_MASK_OUTPUT_CHANGE);
 
+	xcb_grab_key(conn, 1, root, XCB_MOD_MASK_ANY, AUDIO_MUTE_KEYCODE,
+	    XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+	xcb_grab_key(conn, 1, root, XCB_MOD_MASK_ANY, AUDIO_DOWN_KEYCODE,
+	    XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+	xcb_grab_key(conn, 1, root, XCB_MOD_MASK_ANY, AUDIO_UP_KEYCODE,
+	    XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+
 	xcb_flush(conn);
 
 	while ((evt = xcb_wait_for_event(conn)) != NULL) {
-		kill(getpid(), SIGUSR1);
+		if (evt->response_type == randr_event_base +
+		    XCB_RANDR_NOTIFY_OUTPUT_CHANGE)
+			kill(getpid(), SIGUSR1);
+		else if (evt->response_type == XCB_KEY_RELEASE)
+			kill(getpid(), SIGUSR2);
 		free(evt);
 	}
 }
@@ -575,7 +602,7 @@ brightness_event_loop(xcb_connection_t *conn, xcb_window_t root)
 void *
 brightness_event_loop_thread_start(struct brightness_event_loop_args *args)
 {
-	brightness_event_loop(args->conn, args->root);
+	brightness_event_loop(args->conn, args->root, args->event_base);
 
 	return NULL;
 }
@@ -677,6 +704,7 @@ audio_init()
 	for (devinfo.index = 0;
 	    ioctl(fd, AUDIO_MIXER_DEVINFO, &devinfo) != -1;
 	    devinfo.index++) {
+		/* puts(devinfo.label.name); */
 		if (strncmp(MIXER_DEVICE_CLASS, devinfo.label.name,
 		    sizeof(MIXER_DEVICE_CLASS)) == 0 &&
 		    devinfo.type == AUDIO_MIXER_CLASS) {
@@ -719,6 +747,8 @@ audio_info(int mixer_device)
 	static char str[AUDIO_BUFLEN], *res;
 	int fd;
 	mixer_ctrl_t value;
+
+	/* TODO: Respect mute state */
 
 	res = NULL;
 
@@ -787,7 +817,7 @@ main()
 	pthread_t brightness_event_loop_thread;
 	struct brightness_event_loop_args bel_args;
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
-	    weather_fd, clock_update, n, mixer_device;
+	    weather_fd, clock_update, n, mixer_device, randr_event_base;
 
 	
 	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
@@ -796,7 +826,7 @@ main()
 	weather_fd = weather_file();
 
 	brightness_init_success = brightness_init(&display_connection,
-	    &root_window, &backlight_atom, &randr_output,
+	    &root_window, &backlight_atom, &randr_output, &randr_event_base,
 	    &brightness_range);
 
 	mixer_device = audio_init();
@@ -807,7 +837,7 @@ main()
 	infos[INFO_NETWORK] = network_info();
 	infos[INFO_BRIGHTNESS] = brightness_init_success ?
 	    brightness_info(display_connection, randr_output,
-	    backlight_atom, brightness_range) : NULL;
+		backlight_atom, brightness_range) : NULL;
 	infos[INFO_WEATHER] = weather_info();
 	infos[INFO_AUDIO] = mixer_device < 0 ?
 	    NULL : audio_info(mixer_device);
@@ -826,8 +856,8 @@ main()
 
 	if (mail_fd >= 0) {
 		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE,
-		EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
-		0, NULL);
+		    EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
+		    0, NULL);
 	}
 	
 	if (brightness_init_success) {
@@ -838,14 +868,19 @@ main()
 		    NULL);
 		bel_args.conn = display_connection;
 		bel_args.root = root_window;
+		bel_args.event_base = randr_event_base;
 		pthread_create(&brightness_event_loop_thread, NULL,
 		    (void *(*)(void *))brightness_event_loop_thread_start,
 		    &bel_args);
 	}
 
-	if (mixer_device > 0)
+	if (mixer_device > 0) {
+		signal(SIGUSR2, SIG_IGN);
 		EV_SET(&kev_in[n++], AUDIO_TIMER, EVFILT_TIMER, EV_ADD,
 		    0, AUDIO_INTERVAL, NULL);
+		EV_SET(&kev_in[n++], SIGUSR2, EVFILT_SIGNAL, EV_ADD, 0, 0,
+		    NULL);
+	}
 
 	if (weather_fd >= 0)
 		EV_SET(&kev_in[n++], weather_fd, EVFILT_VNODE,
@@ -933,6 +968,11 @@ main()
 							randr_output,
 							backlight_atom,
 							brightness_range);
+						break;
+					case SIGUSR2:
+						infos[INFO_AUDIO] =
+						    audio_info(
+							mixer_device);
 						break;
 					}
 					break;
