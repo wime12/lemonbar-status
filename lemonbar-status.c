@@ -55,6 +55,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include <xcb/xcb.h>
 #include <xcb/randr.h>
@@ -102,21 +103,20 @@ enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_BRIGHTNESS,
 enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
     BRIGHTNESS_TIMER, AUDIO_TIMER };
 
-struct brightness_event_loop_args
+struct x_event_loop_args
 {
 	xcb_connection_t *conn;
 	xcb_window_t root;
 	int event_base;
+	int out;
 };
 
 
 char	       *audio_info(int, int);
 int		audio_init(int *, int *);
 int		audio_print_volume(char *, size_t, int);
-void		brightness_event_loop(xcb_connection_t *, xcb_window_t,
-    int);
-void	       *brightness_event_loop_thread_start(struct
-    brightness_event_loop_args *);
+void		x_event_loop(xcb_connection_t *, xcb_window_t, int, int);
+void	       *x_event_loop_thread_start(struct x_event_loop_args *);
 static char    *brightness_info(xcb_connection_t *, xcb_randr_output_t,
     xcb_atom_t, int);
 int		brightness_init(xcb_connection_t **, xcb_window_t *,
@@ -575,12 +575,15 @@ cleanup_1:
 	return res;
 }
 
-/* TODO: rename brightness_event_loop() to x_event_loop() */
+enum x_events { BRIGHTNESS_EVENT, AUDIO_EVENT };
+
 void
-brightness_event_loop(xcb_connection_t *conn, xcb_window_t root,
-    int randr_event_base)
+x_event_loop(xcb_connection_t *conn, xcb_window_t root,
+	int randr_event_base, int out)
 {
 	xcb_generic_event_t *evt;
+	char brightness_event = (char)BRIGHTNESS_EVENT;
+	char audio_event = (char)AUDIO_EVENT; 
 
 	xcb_randr_select_input(conn, root,
 	    XCB_RANDR_NOTIFY_MASK_OUTPUT_PROPERTY |
@@ -598,18 +601,17 @@ brightness_event_loop(xcb_connection_t *conn, xcb_window_t root,
 	while ((evt = xcb_wait_for_event(conn)) != NULL) {
 		if (evt->response_type == randr_event_base +
 		    XCB_RANDR_NOTIFY_OUTPUT_CHANGE)
-			kill(getpid(), SIGUSR1);
+			write(out, &brightness_event, 1);
 		else if (evt->response_type == XCB_KEY_RELEASE)
-			kill(getpid(), SIGUSR2);
+			write(out, &audio_event, 1);
 		free(evt);
 	}
 }
 
-/* TODO: rename brightness_event_loop_thread_start() to x_event_loop_start() */
 void *
-brightness_event_loop_thread_start(struct brightness_event_loop_args *args)
+x_event_loop_thread_start(struct x_event_loop_args *args)
 {
-	brightness_event_loop(args->conn, args->root, args->event_base);
+	x_event_loop(args->conn, args->root, args->event_base, args->out);
 
 	return NULL;
 }
@@ -869,17 +871,17 @@ output_status(char *infos[])
 int
 main()
 {
-	char *infos[INFO_ARRAY_SIZE];
+	char *infos[INFO_ARRAY_SIZE], c;
 	xcb_connection_t *display_connection;
 	xcb_window_t root_window;
 	xcb_atom_t backlight_atom;
 	xcb_randr_output_t randr_output;
 	struct kevent kev_in[EVENTS], kev[EVENTS];
-	pthread_t brightness_event_loop_thread;
-	struct brightness_event_loop_args bel_args;
+	pthread_t x_event_loop_thread;
+	struct x_event_loop_args bel_args;
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
 	    weather_fd, clock_update, n, mixer_device, mute_device,
-	    randr_event_base, audio_init_success;
+	    randr_event_base, audio_init_success, pipe_fd[2];
 
 	
 	/* Initialization and first ouput */
@@ -890,8 +892,8 @@ main()
 	weather_fd = weather_file();
 
 	brightness_init_success = brightness_init(&display_connection,
-	    &root_window, &backlight_atom, &randr_output, &randr_event_base,
-	    &brightness_range);
+	    &root_window, &backlight_atom, &randr_output,
+	    &randr_event_base, &brightness_range);
 
 	audio_init_success = audio_init(&mixer_device, &mute_device);
 
@@ -926,26 +928,28 @@ main()
 		    EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
 		    0, NULL);
 	}
+
+	if (pipe(pipe_fd) == -1) 
+		warn("could not open pipe");
 	
 	if (brightness_init_success) {
-		signal(SIGUSR1, SIG_IGN);
 		EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD,
 		    0, BRIGHTNESS_INTERVAL, NULL);
-		EV_SET(&kev_in[n++], SIGUSR1, EVFILT_SIGNAL, EV_ADD, 0, 0,
+		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0, 0,
 		    NULL);
 		bel_args.conn = display_connection;
 		bel_args.root = root_window;
 		bel_args.event_base = randr_event_base;
-		pthread_create(&brightness_event_loop_thread, NULL,
-		    (void *(*)(void *))brightness_event_loop_thread_start,
+		bel_args.out = pipe_fd[1];
+		pthread_create(&x_event_loop_thread, NULL,
+		    (void *(*)(void *))x_event_loop_thread_start,
 		    &bel_args);
 	}
 
 	if (audio_init_success) {
-		signal(SIGUSR2, SIG_IGN);
 		EV_SET(&kev_in[n++], AUDIO_TIMER, EVFILT_TIMER, EV_ADD,
 		    0, AUDIO_INTERVAL, NULL);
-		EV_SET(&kev_in[n++], SIGUSR2, EVFILT_SIGNAL, EV_ADD, 0, 0,
+		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0, 0,
 		    NULL);
 	}
 
@@ -961,100 +965,101 @@ main()
 		n = 0;
 		if (nev == -1)
 			err(1, NULL);
-		else if (nev == 0)
+
+		if (nev == 0)
 			continue;
-		else
-			for (i = 0; i < nev; i++) {
 
-				if (kev[i].flags & EV_ERROR)
-					errx(1, "%s",
-					    strerror(kev[i].data));
+		for (i = 0; i < nev; i++) {
 
-				switch (kev[i].filter) {
+			if (kev[i].flags & EV_ERROR)
+				errx(1, "%s",
+				    strerror(kev[i].data));
 
-				case EVFILT_VNODE:
+			switch (kev[i].filter) {
 
-					if (kev[i].ident ==
-					    (uintptr_t)mail_fd)
-						infos[INFO_MAIL] =
-						    mail_info(mail_fd);
-					else if (kev[i].ident ==
-					    (uintptr_t)weather_fd)
-						infos[INFO_WEATHER] =
-						    weather_info();
+			case EVFILT_VNODE:
+
+				if (kev[i].ident == (uintptr_t)mail_fd)
+					infos[INFO_MAIL] =
+					    mail_info(mail_fd);
+				else if (kev[i].ident ==
+				    (uintptr_t)weather_fd)
+					infos[INFO_WEATHER] =
+					    weather_info();
+				break;
+
+			case EVFILT_TIMER:
+
+				switch (kev[i].ident) {
+
+				case CLOCK_TIMER:
+					infos[INFO_CLOCK] =
+						clock_info(&clock_update);
+					EV_SET(&kev_in[n++], CLOCK_TIMER,
+					    EVFILT_TIMER, EV_DELETE, 0, 0,
+					    NULL);
+					EV_SET(&kev_in[n++],
+					    CLOCK_TIMER, EVFILT_TIMER,
+					    EV_ADD, 0, clock_update, NULL);
 					break;
 
-				case EVFILT_TIMER:
-
-					switch (kev[i].ident) {
-
-					case CLOCK_TIMER:
-						infos[INFO_CLOCK] =
-							clock_info(
-							    &clock_update);
-						EV_SET(&kev_in[n++],
-						    CLOCK_TIMER,
-						    EVFILT_TIMER, EV_DELETE,
-						    0, 0, NULL);
-						EV_SET(&kev_in[n++],
-						    CLOCK_TIMER,
-						    EVFILT_TIMER, EV_ADD, 0,
-						    clock_update,
-						    NULL);
-						break;
-
-					case BATTERY_TIMER:
-						infos[INFO_BATTERY] =
-						    battery_info();
-						break;
-
-					case NETWORK_TIMER:
-						infos[INFO_NETWORK] =
-						    network_info();
-						break;
-
-					case BRIGHTNESS_TIMER:
-						infos[INFO_BRIGHTNESS] =
-						    brightness_info(
-							display_connection,
-							randr_output,
-							backlight_atom,
-							brightness_range);
-						break;
-					case AUDIO_TIMER:
-						infos[INFO_AUDIO] =
-						    audio_info(
-							mixer_device,
-							mute_device);
-						break;
-					}
+				case BATTERY_TIMER:
+					infos[INFO_BATTERY] =
+					    battery_info();
 					break;
 
-				case EVFILT_SIGNAL:
-					switch (kev[i].ident) {
-					case SIGUSR1:
-						infos[INFO_BRIGHTNESS] =
-						    brightness_info(
-							display_connection,
-							randr_output,
-							backlight_atom,
-							brightness_range);
-						break;
-					case SIGUSR2:
-						infos[INFO_AUDIO] =
-						    audio_info(
-							mixer_device,
-							mute_device);
-						break;
-					}
+				case NETWORK_TIMER:
+					infos[INFO_NETWORK] =
+					    network_info();
+					break;
+
+				case BRIGHTNESS_TIMER:
+					infos[INFO_BRIGHTNESS] =
+					    brightness_info(
+						display_connection,
+						randr_output,
+						backlight_atom,
+						brightness_range);
+					break;
+				case AUDIO_TIMER:
+					infos[INFO_AUDIO] =
+					    audio_info( mixer_device,
+						mute_device);
 					break;
 				}
+				break;
 
+			case EVFILT_READ:
+				if (kev[i].ident ==
+				    (uintptr_t)pipe_fd[0]) {
+					read(pipe_fd[0], &c, 1);
+					switch (c) {
+					case BRIGHTNESS_EVENT:
+						infos[INFO_BRIGHTNESS] =
+						    brightness_info(
+							display_connection,
+							randr_output,
+							backlight_atom,
+							brightness_range);
+						break;
+					case AUDIO_EVENT:
+						infos[INFO_AUDIO] =
+						    audio_info(
+						    mixer_device,
+						    mute_device);
+						break;
+					}
+				}
+				break;
 			}
+		}
 		output_status(infos);
 	}
 
-	/* TODO: Clean up at exit */
+	close(pipe_fd[0]);
+	close(pipe_fd[1]);
+
+cleanup_1:
 
 	if (mail_fd >= 0)
 	    close(mail_fd);
