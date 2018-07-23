@@ -78,6 +78,7 @@
 
 #define NORMAL_COLOR "%{F#DDDDDD}"
 #define MAIL_COLOR "%{F#FFFF00}"
+#define SEPARATOR_COLOR "%{F#888888}"
 
 #define AUDIO_MUTE_KEYCODE 160
 #define AUDIO_DOWN_KEYCODE 174
@@ -841,6 +842,10 @@ audio_print_volume(char *str, size_t buflen, int vol)
 			/ 100.0)));
 }
 
+/* MPD
+ * shell commands: mpc idleloop player; song="$(mpc current)"; out="$MPC$(mpc current -f '%position%') - $song" */
+
+
 
 static void
 output_status(char *infos[])
@@ -859,7 +864,7 @@ output_status(char *infos[])
 	for (; i < INFO_ARRAY_SIZE; i++) {
 		if (infos[i] == NULL)
 			continue;
-		fputs(" | ", stdout);
+		fputs(" " SEPARATOR_COLOR "|" NORMAL_COLOR " ", stdout);
 		fputs(infos[i], stdout);
 	}
 	putc('\n', stdout);
@@ -924,8 +929,8 @@ main()
 	    NETWORK_INTERVAL, NULL);
 
 	if (mail_fd >= 0) {
-		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE,
-		    EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
+		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE, EV_ADD |
+		    EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
 		    0, NULL);
 	}
 
@@ -933,10 +938,10 @@ main()
 		warn("could not open pipe");
 	
 	if (brightness_init_success) {
-		EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER, EV_ADD,
-		    0, BRIGHTNESS_INTERVAL, NULL);
-		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0, 0,
-		    NULL);
+		EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER,
+		    EV_ADD, 0, BRIGHTNESS_INTERVAL, NULL);
+		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0,
+		    0, NULL);
 		bel_args.conn = display_connection;
 		bel_args.root = root_window;
 		bel_args.event_base = randr_event_base;
@@ -949,8 +954,8 @@ main()
 	if (audio_init_success) {
 		EV_SET(&kev_in[n++], AUDIO_TIMER, EVFILT_TIMER, EV_ADD,
 		    0, AUDIO_INTERVAL, NULL);
-		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0, 0,
-		    NULL);
+		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0,
+		    0, NULL);
 	}
 
 	if (weather_fd >= 0)
