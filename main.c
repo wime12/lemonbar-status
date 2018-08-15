@@ -62,6 +62,8 @@
 
 #include <json-c/json.h>
 
+#include "mpd.h"
+
 
 /* TODO: Do not hardcode the home directory. */
 #define IFNAME "trunk0"
@@ -99,7 +101,7 @@
 
 
 enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_BRIGHTNESS,
-    INFO_AUDIO, INFO_WEATHER, INFO_CLOCK, INFO_ARRAY_SIZE };
+    INFO_AUDIO, INFO_WEATHER, INFO_CLOCK, INFO_MPD, INFO_ARRAY_SIZE };
 
 enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
     BRIGHTNESS_TIMER, AUDIO_TIMER };
@@ -886,84 +888,102 @@ main()
 	struct x_event_loop_args bel_args;
 	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
 	    weather_fd, clock_update, n, mixer_device, mute_device,
-	    randr_event_base, audio_init_success, pipe_fd[2];
-
-	
-	/* Initialization and first ouput */
+	    randr_event_base, audio_init_success, pipe_fd[2], mpd_fd;
 	
 	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
-
-	mail_fd = mail_file();
-	weather_fd = weather_file();
-
-	brightness_init_success = brightness_init(&display_connection,
-	    &root_window, &backlight_atom, &randr_output,
-	    &randr_event_base, &brightness_range);
-
-	audio_init_success = audio_init(&mixer_device, &mute_device);
-
-	infos[INFO_MAIL] = mail_info(mail_fd);
-	infos[INFO_CLOCK] = clock_info(&clock_update);
-	infos[INFO_BATTERY] = battery_info();
-	infos[INFO_NETWORK] = network_info();
-	infos[INFO_BRIGHTNESS] = brightness_init_success ?
-	    brightness_info(display_connection, randr_output,
-		backlight_atom, brightness_range) : NULL;
-	infos[INFO_WEATHER] = weather_info();
-	infos[INFO_AUDIO] = audio_init_success ?
-	    audio_info(mixer_device, mute_device) : NULL;
-
-	output_status(infos);
-
-
-	/* Prepare the kqueue events */
-
-	if ((kq = kqueue()) < 0)
-		err(1, "cannot create kqueue");
 	n = 0;
-	EV_SET(&kev_in[n++], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    clock_update, NULL);
-	EV_SET(&kev_in[n++], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    BATTERY_INTERVAL, NULL);
-	EV_SET(&kev_in[n++], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    NETWORK_INTERVAL, NULL);
 
-	if (mail_fd >= 0) {
+        /* Mail */
+
+	if ((mail_fd = mail_file()) >= 0) {
+                infos[INFO_MAIL] = mail_info(mail_fd);
 		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE, EV_ADD |
 		    EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
 		    0, NULL);
 	}
 
-	if (pipe(pipe_fd) == -1) 
-		warn("could not open pipe");
-	
-	if (brightness_init_success) {
+        /* MPD */
+
+        if ((mpd_fd = mpd_init()) >= 0) {
+		EV_SET(&kev_in[n++], mpd_fd, EVFILT_READ, EV_ADD |
+		    EV_CLEAR, 0, 0, NULL);
+        }
+        
+        /* Weather */
+
+        if ((weather_fd = weather_file()) >= 0) {
+                infos[INFO_WEATHER] = weather_info();
+		EV_SET(&kev_in[n++], weather_fd, EVFILT_VNODE,
+		    EV_ADD | EV_CLEAR, NOTE_WRITE, 0, NULL);
+        }
+
+        /* Brightness */
+
+	if (brightness_init(&display_connection,
+	    &root_window, &backlight_atom, &randr_output,
+	    &randr_event_base, &brightness_range)) {
+                infos[INFO_BRIGHTNESS] =
+                    brightness_info(display_connection, randr_output,
+                        backlight_atom, brightness_range);
+
 		EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER,
 		    EV_ADD, 0, BRIGHTNESS_INTERVAL, NULL);
 		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0,
 		    0, NULL);
+
 		bel_args.conn = display_connection;
 		bel_args.root = root_window;
 		bel_args.event_base = randr_event_base;
 		bel_args.out = pipe_fd[1];
+
 		pthread_create(&x_event_loop_thread, NULL,
 		    (void *(*)(void *))x_event_loop_thread_start,
 		    &bel_args);
+                if (pipe(pipe_fd) == -1) 
+                        warn("could not open pipe");
+	
 	}
 
-	if (audio_init_success) {
+        /* Audio */
+
+	if (audio_init(&mixer_device, &mute_device)) {
+                infos[INFO_AUDIO] = audio_info(mixer_device, mute_device);
+
 		EV_SET(&kev_in[n++], AUDIO_TIMER, EVFILT_TIMER, EV_ADD,
 		    0, AUDIO_INTERVAL, NULL);
 		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0,
 		    0, NULL);
 	}
 
-	if (weather_fd >= 0)
-		EV_SET(&kev_in[n++], weather_fd, EVFILT_VNODE,
-		    EV_ADD | EV_CLEAR, NOTE_WRITE, 0, NULL);
+        /* Clock */
 
-	
-	/* Start the queue event loop */
+	infos[INFO_CLOCK] = clock_info(&clock_update);
+
+	EV_SET(&kev_in[n++], CLOCK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    clock_update, NULL);
+
+        /* Battery */
+
+	infos[INFO_BATTERY] = battery_info();
+
+	EV_SET(&kev_in[n++], BATTERY_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    BATTERY_INTERVAL, NULL);
+
+        /* Network */
+
+	infos[INFO_NETWORK] = network_info();
+
+	EV_SET(&kev_in[n++], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    NETWORK_INTERVAL, NULL);
+
+
+
+        /* Event Loop */
+
+	output_status(infos);
+
+	if ((kq = kqueue()) < 0)
+		err(1, "cannot create kqueue");
 
 	for (;;) {
 		nev = kevent(kq, kev_in, n, kev, EVENTS, NULL);
@@ -1054,7 +1074,12 @@ main()
 						    mute_device);
 						break;
 					}
-				}
+				} else if (kev[i].ident ==
+                                    (uintptr_t)mpd_fd) {
+                                            infos[INFO_MPD] =
+                                                mpd_info(mpd_fd);
+                                }
+
 				break;
 			}
 		}
@@ -1067,7 +1092,7 @@ main()
 cleanup_1:
 
 	if (mail_fd >= 0)
-	    close(mail_fd);
+                close(mail_fd);
 
 	return 0;
 }
