@@ -17,9 +17,11 @@
 #define MAXDATASIZE 1024 /* TODO: What is sensible for mpd? */
 
 #define IDLESTR "idle player\n"
+#define CURRENTSTR "currentsong\n"
 #define TITLESTR "\nTitle: "
 #define NAMESTR "\nName: "
-#define CURRENTSTR "currentsong\n"
+#define STATUSSTR "status\n"
+#define STATESTR "\nstate: "
 
 char *
 find_tag(char *str, char* tag, size_t offset)
@@ -104,25 +106,55 @@ mpd_init()
                 return -1;
         }
 
-        send(sockfd, IDLESTR, (sizeof IDLESTR) - 1, 0);
-
         return sockfd;
 }
 
-char *
-mpd_info(int sockfd)
+void
+mpd_idle_start(int sockfd)
+{
+        send(sockfd, IDLESTR, (sizeof IDLESTR) - 1, 0);
+}
+
+void
+mpd_idle_end(int sockfd)
 {
         int numbytes;
-        char *name, *title;
-        char buf[MAXDATASIZE];
-        static char info[MPD_INFOLEN];
-
-        buf[0] = '\n';
+        char *buf[MAXDATASIZE];
 
         if ((numbytes = recv(sockfd, buf + 1, MAXDATASIZE - 2, 0))
             == -1) {
                 perror("recv");
                 exit(1);
+        }
+}
+
+char *
+mpd_info(int sockfd)
+{
+        int numbytes, nprinted;
+        char *name, *title, *status;
+        char buf[MAXDATASIZE];
+        static char info[MPD_INFOLEN];
+
+        buf[0] = '\n';
+        nprinted = 0;
+
+        send(sockfd, STATUSSTR, (sizeof STATUSSTR) - 1, 0);
+        if ((numbytes = recv(sockfd, buf + 1, MAXDATASIZE - 2, 0))
+            == -1) {
+                perror("recv");
+                exit(1);
+        }
+
+        buf[numbytes + 1] = '\0';
+        status = find_tag(buf, STATESTR, sizeof STATESTR - 1);
+        if (status) {
+                terminate_str(status);
+                if (strcmp(status, "stop") == 0)
+                        nprinted = snprintf(info, MPD_INFOLEN,
+                                        "STOPPED - ");
+                else if (strcmp(status, "pause") == 0)
+                        nprinted = snprintf(info, MPD_INFOLEN, "PAUSED - ");
         }
 
         send(sockfd, CURRENTSTR, (sizeof CURRENTSTR) - 1, 0);
@@ -140,28 +172,8 @@ mpd_info(int sockfd)
         title = find_tag(buf, TITLESTR, sizeof TITLESTR - 1);
         if (title) terminate_str(title);
 
-        snprintf(info, MPD_INFOLEN, "%s: %s\n",
+        snprintf(info + nprinted, MPD_INFOLEN - nprinted, "%s: %s",
             name ? name : "UNKNOWN NAME", title ? title : "UNKNOWN TITLE");
-
-        send(sockfd, IDLESTR, (sizeof IDLESTR) - 1, 0);
 
         return info;
 }
-
-/*
-int
-main(int argc, char *argv[])
-{
-        int sockfd;
-        char buf[MAXDATASIZE];
-
-        sockfd = mpd_init();
-
-        buf[0] = '\n';
-        for (;;) mpd_str(sockfd, buf);
-
-        close(sockfd);
-
-        return 0;
-}
-*/

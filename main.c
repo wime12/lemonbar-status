@@ -100,8 +100,11 @@
 #define AUDIO_INTERVAL (10 * 1000)
 
 
-enum infos { INFO_MAIL, INFO_NETWORK, INFO_BATTERY, INFO_BRIGHTNESS,
-    INFO_AUDIO, INFO_WEATHER, INFO_CLOCK, INFO_MPD, INFO_ARRAY_SIZE };
+enum infos { INFO_MPD, INFO_MAIL, INFO_NETWORK, INFO_BATTERY,
+    INFO_BRIGHTNESS, INFO_AUDIO, INFO_WEATHER, INFO_CLOCK,
+    INFO_ARRAY_SIZE };
+
+#define LEFT_ALIGNED INFO_MPD
 
 enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
     BRIGHTNESS_TIMER, AUDIO_TIMER };
@@ -844,18 +847,12 @@ audio_print_volume(char *str, size_t buflen, int vol)
 			/ 100.0)));
 }
 
-/* MPD
- * shell commands: mpc idleloop player; song="$(mpc current)"; out="$MPC$(mpc current -f '%position%') - $song" */
-
-
-
 static void
-output_status(char *infos[])
+output_elements(char *infos[], int start, int end)
 {
-	int i;
-	fputs(NORMAL_COLOR "%{r}", stdout);
+        int i;
 
-	for (i = 0; i < INFO_ARRAY_SIZE; i++) {
+	for (i = start; i < end; i++) {
 		if (infos[i] == NULL)
 			continue;
 		fputs(infos[i], stdout);
@@ -863,17 +860,44 @@ output_status(char *infos[])
 		break;
 	}
 
-	for (; i < INFO_ARRAY_SIZE; i++) {
+	for (; i < end; i++) {
 		if (infos[i] == NULL)
 			continue;
 		fputs(" " SEPARATOR_COLOR "|" NORMAL_COLOR " ", stdout);
 		fputs(infos[i], stdout);
 	}
+}
+
+static void
+output_status(char *infos[])
+{
+	int i;
+
+        /* search first left aligned element */
+        for (i = 0; i < INFO_ARRAY_SIZE && infos[i] == NULL; i++)
+                ;
+
+        if (i <= LEFT_ALIGNED) {
+                fputs(NORMAL_COLOR "%{l}", stdout);
+                output_elements(infos, i, LEFT_ALIGNED + 1);
+                i++;
+        }
+
+        /* search first right aligned element */
+        for (; i < INFO_ARRAY_SIZE && infos[i] == NULL; i++)
+                ;
+
+        /* if first right aligned element found */
+        if (i < INFO_ARRAY_SIZE) {
+                fputs(NORMAL_COLOR "%{r}", stdout);
+                output_elements(infos, i, INFO_ARRAY_SIZE);
+        }
+
 	putc('\n', stdout);
 	fflush(stdout);
 }
 
-#define EVENTS 8
+#define EVENTS 10
 
 int
 main()
@@ -886,9 +910,9 @@ main()
 	struct kevent kev_in[EVENTS], kev[EVENTS];
 	pthread_t x_event_loop_thread;
 	struct x_event_loop_args bel_args;
-	int mail_fd, kq, nev, i, brightness_range, brightness_init_success,
+	int mail_fd, kq, nev, i, brightness_range,
 	    weather_fd, clock_update, n, mixer_device, mute_device,
-	    randr_event_base, audio_init_success, pipe_fd[2], mpd_fd;
+	    randr_event_base, pipe_fd[2], mpd_fd;
 	
 	bzero(infos, INFO_ARRAY_SIZE * sizeof(char *));
 	n = 0;
@@ -905,6 +929,8 @@ main()
         /* MPD */
 
         if ((mpd_fd = mpd_init()) >= 0) {
+                infos[INFO_MPD] = mpd_info(mpd_fd);
+                mpd_idle_start(mpd_fd);
 		EV_SET(&kev_in[n++], mpd_fd, EVFILT_READ, EV_ADD |
 		    EV_CLEAR, 0, 0, NULL);
         }
@@ -922,10 +948,14 @@ main()
 	if (brightness_init(&display_connection,
 	    &root_window, &backlight_atom, &randr_output,
 	    &randr_event_base, &brightness_range)) {
+
                 infos[INFO_BRIGHTNESS] =
                     brightness_info(display_connection, randr_output,
                         backlight_atom, brightness_range);
 
+		if (pipe(pipe_fd) == -1)
+		        warn("could not open pipe");
+		  
 		EV_SET(&kev_in[n++], BRIGHTNESS_TIMER, EVFILT_TIMER,
 		    EV_ADD, 0, BRIGHTNESS_INTERVAL, NULL);
 		EV_SET(&kev_in[n++], pipe_fd[0], EVFILT_READ, EV_ADD, 0,
@@ -939,9 +969,6 @@ main()
 		pthread_create(&x_event_loop_thread, NULL,
 		    (void *(*)(void *))x_event_loop_thread_start,
 		    &bel_args);
-                if (pipe(pipe_fd) == -1) 
-                        warn("could not open pipe");
-	
 	}
 
         /* Audio */
@@ -975,8 +1002,6 @@ main()
 
 	EV_SET(&kev_in[n++], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
 	    NETWORK_INTERVAL, NULL);
-
-
 
         /* Event Loop */
 
@@ -1076,8 +1101,10 @@ main()
 					}
 				} else if (kev[i].ident ==
                                     (uintptr_t)mpd_fd) {
+                                            mpd_idle_end(mpd_fd);
                                             infos[INFO_MPD] =
                                                 mpd_info(mpd_fd);
+                                            mpd_idle_start(mpd_fd);
                                 }
 
 				break;

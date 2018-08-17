@@ -1,4 +1,4 @@
-SRC=lemonbar-status.c
+SRC=main.c mpd.c
 TARGET=lemonbar-status
 DEBUGTARGET=$(TARGET)-debug
 INCLUDES=-I/usr/X11R6/include -I/usr/local/include
