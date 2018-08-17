@@ -62,7 +62,9 @@
 
 #include <json-c/json.h>
 
+#include "colors.h"
 #include "mpd.h"
+#include "mail.h"
 
 
 /* TODO: Do not hardcode the home directory. */
@@ -73,21 +75,15 @@
 #define MIXER_DEVICE "master"
 #define MIXER_MUTE_DEVICE "mute"
 #define DATE_FORMAT "%a %b %d, %R"
-#define MAIL_TEXT "MAIL"
 #define OUTPUT_NAME "eDP1"
 #define WEATHER_CURRENT_FILENAME "/home/wilfried/.cache/weather/current"
 #define WEATHER_TIMESTAMP_FILENAME "/home/wilfried/.cache/weather/timestamp"
-
-#define NORMAL_COLOR "%{F#DDDDDD}"
-#define MAIL_COLOR "%{F#FFFF00}"
-#define SEPARATOR_COLOR "%{F#888888}"
 
 #define AUDIO_MUTE_KEYCODE 160
 #define AUDIO_DOWN_KEYCODE 174
 #define AUDIO_UP_KEYCODE 176
 
 #define BATT_INFO_BUFLEN 13
-#define MAILPATH_BUFLEN 256
 #define DATE_BUFLEN 18
 #define BRIGHTNESS_BUFLEN 5
 #define WEATHER_BUFLEN 48
@@ -129,12 +125,9 @@ int		brightness_init(xcb_connection_t **, xcb_window_t *,
     xcb_atom_t *, xcb_randr_output_t *, int *, int *);
 static char    *battery_info();
 static char    *clock_info();
-static int	mail_file();
-static char    *mail_info(int fd);
 static int	open_socket(const char *);
 static void	output_status(char **);
 static char    *network_info();
-static int	timespec_later(struct timespec *, struct timespec *);
 int		weather_file();
 char	       *weather_info();
 
@@ -209,63 +202,6 @@ battery_info()
 		return NULL;
 	}
 }
-
-
-/* Mail */
-
-/* Was t1 later than t2? */
-static int
-timespec_later(struct timespec *t1, struct timespec *t2)
-{
-	if (t1->tv_sec == t2->tv_sec)
-		return t1->tv_nsec > t2->tv_nsec;
-	else
-		return t1->tv_sec > t2->tv_sec;
-}
-
-static int
-mail_file()
-{
-	char mail_path[MAILPATH_BUFLEN];
-	char *user;
-	int mail_fd = -1;
-
-	strlcpy(mail_path, _PATH_MAILDIR "/", MAILPATH_BUFLEN);
-
-	if ((user = getlogin()) == NULL) {
-		warn("cannot get user's login name");
-		return mail_fd;
-	}
-
-	strlcat(mail_path, user, MAILPATH_BUFLEN);
-
-	if ((mail_fd = open(mail_path, O_RDONLY)) < 0)
-		warn("cannot open %s", mail_path);
-
-	return mail_fd;
-}
-
-static char *
-mail_info(int fd)
-{
-    	struct stat st;
-
-	if (fd < 0) {
-	    	warn("invalid mail file descriptor");
-		return NULL;
-	}
-
-	if (fstat(fd, &st) < 0) {
-		warn("cannot get mail box status");
-		return NULL;
-	}
-
-	if (timespec_later(&st.st_mtim, &st.st_atim))
-		return MAIL_COLOR MAIL_TEXT NORMAL_COLOR;
-	else
-		return NULL;
-}
-
 
 /* Clock */
 
@@ -919,7 +855,7 @@ main()
 
         /* Mail */
 
-	if ((mail_fd = mail_file()) >= 0) {
+	if ((mail_fd = mail_init()) >= 0) {
                 infos[INFO_MAIL] = mail_info(mail_fd);
 		EV_SET(&kev_in[n++], mail_fd, EVFILT_VNODE, EV_ADD |
 		    EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB,
@@ -1113,13 +1049,7 @@ main()
 		output_status(infos);
 	}
 
-	close(pipe_fd[0]);
-	close(pipe_fd[1]);
-
 cleanup_1:
-
-	if (mail_fd >= 0)
-                close(mail_fd);
 
 	return 0;
 }

@@ -1,4 +1,4 @@
-SRC=main.c mpd.c
+SRC=main.c mpd.c mail.c
 TARGET=lemonbar-status
 DEBUGTARGET=$(TARGET)-debug
 INCLUDES=-I/usr/X11R6/include -I/usr/local/include
