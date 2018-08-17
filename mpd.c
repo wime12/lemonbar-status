@@ -16,6 +16,7 @@
 
 #define MAXDATASIZE 1024 /* TODO: What is sensible for mpd? */
 
+#define OKSTR "OK MPD "
 #define IDLESTR "idle player\n"
 #define CURRENTSTR "currentsong\n"
 #define TITLESTR "\nTitle: "
@@ -101,7 +102,8 @@ mpd_init()
 
         buf[numbytes] = '\0';
 
-        if (numbytes <= 7 || strncmp(buf, "OK MPD ", 7) != 0) {
+        if (numbytes <= sizeof OKSTR  - 1 ||
+            strncmp(buf, OKSTR, sizeof OKSTR - 1) != 0) {
                 fprintf(stderr, "Not an MPD server\n");
                 return -1;
         }
