@@ -114,7 +114,6 @@ struct x_event_loop_args
 	int out;
 };
 
-
 char	       *audio_info(int, int);
 int		audio_init(int *, int *);
 int		audio_print_volume(char *, size_t, int);
@@ -125,33 +124,10 @@ static char    *brightness_info(xcb_connection_t *, xcb_randr_output_t,
 int		brightness_init(xcb_connection_t **, xcb_window_t *,
     xcb_atom_t *, xcb_randr_output_t *, int *, int *);
 static char    *battery_info();
-static int	open_socket(const char *);
 static void	output_status(char **);
 static char    *network_info();
 int		weather_file();
 char	       *weather_info();
-
-
-static int
-open_socket(const char *sockname)
-    {
-	struct sockaddr_un s_un;
-	int errr, sock;
-
-	sock = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (sock == -1)
-		err(1, "cannot create local socket");
-
-	s_un.sun_family = AF_UNIX;
-	strlcpy(s_un.sun_path, sockname, sizeof(s_un.sun_path));
-	if (connect(sock, (struct sockaddr *)&s_un, sizeof(s_un)) == -1) {
-		errr = errno;
-		close(sock);
-		errno = errr;
-		sock = -1;
-	}
-	return (sock);
-}
 
 
 /* Battery */
