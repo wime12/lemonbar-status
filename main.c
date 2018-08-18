@@ -65,6 +65,7 @@
 #include "colors.h"
 #include "mpd.h"
 #include "mail.h"
+#include "clock.h"
 
 
 /* TODO: Do not hardcode the home directory. */
@@ -124,7 +125,6 @@ static char    *brightness_info(xcb_connection_t *, xcb_randr_output_t,
 int		brightness_init(xcb_connection_t **, xcb_window_t *,
     xcb_atom_t *, xcb_randr_output_t *, int *, int *);
 static char    *battery_info();
-static char    *clock_info();
 static int	open_socket(const char *);
 static void	output_status(char **);
 static char    *network_info();
@@ -201,36 +201,6 @@ battery_info()
 	default:
 		return NULL;
 	}
-}
-
-/* Clock */
-
-static char *
-clock_info(int *next_update)
-{
-	static char str[DATE_BUFLEN];
-	struct tm ltime;
-	time_t clock;
-
-	if (next_update)
-	    *next_update = 10 * 1000;
-
-	if ((clock = time(NULL)) < 0) {
-		warn("cannot get time");
-		return NULL;
-	}
-
-	if (localtime_r(&clock, &ltime) == NULL) {
-		warn("cannot convert to localtime");
-		return NULL;
-	}
-
-	if (next_update)
-		*next_update = (60 - ltime.tm_sec) * 1000;
-
-	strftime(str, sizeof(str), DATE_FORMAT, &ltime);
-
-	return str;
 }
 
 /* Network */
