@@ -1,10 +1,10 @@
-SRC=main.c mpd.c mail.c clock.c battery.c net.c weather.c x.c
+SRC=main.c mpd.c mail.c clock.c battery.c net.c weather.c x.c audio.c
 TARGET=lemonbar-status
 DEBUGTARGET=$(TARGET)-debug
 INCLUDES=-I/usr/X11R6/include -I/usr/local/include
 LIBPATHS=-L/usr/X11R6/lib -L/usr/local/lib
 LIBS=-lxcb -lxcb-randr -ljson-c -lpthread
-CHECKFLAGS=-Wall -Wextra
+CHECKFLAGS=-Wall -Wextra -Wunused
 
 all: strip
 

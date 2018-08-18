@@ -65,7 +65,6 @@ x_init(int pipe_fd)
 	xcb_intern_atom_reply_t *backlight_reply = NULL;
 	xcb_atom_t backlight_atom;
 	xcb_screen_t *screen = NULL;
-	xcb_window_t root = { 0 };
 	xcb_screen_iterator_t iter;
 	xcb_randr_get_screen_resources_reply_t *resources_reply = NULL;
 	xcb_randr_output_t *outputs = NULL;
@@ -131,10 +130,10 @@ x_init(int pipe_fd)
 		warnx("no root window found");
 		goto cleanup_3;
 	}
-	root_window = root = screen->root;
+	root_window = screen->root;
 
 	resources_reply = xcb_randr_get_screen_resources_reply(conn,
-	    xcb_randr_get_screen_resources(conn, root), &error);
+	    xcb_randr_get_screen_resources(conn, root_window), &error);
 	if (error != NULL || resources_reply == NULL) {
 		warnx("cannot get screen resources");
 		goto cleanup_3;
@@ -271,17 +270,12 @@ x_event_loop(xcb_connection_t *conn, xcb_window_t root,
 	xcb_flush(conn);
 
 	while ((evt = xcb_wait_for_event(conn)) != NULL) {
-                printf("RECEIVED EVENT: %d (%d, %d)\n",
-                    evt->response_type, randr_event_base +
-                    XCB_RANDR_NOTIFY_OUTPUT_CHANGE, XCB_KEY_RELEASE);
 		if (evt->response_type == randr_event_base +
 		    XCB_RANDR_NOTIFY_OUTPUT_CHANGE) {
 			write(out, &brightness_event, 1);
-                        printf("BRIGHTNESS EVENT WRITTEN");
                 }
 		else if (evt->response_type == XCB_KEY_RELEASE) {
 			write(out, &audio_event, 1);
-                        printf("AUDIO EVENT WRITTEN");
                 }
 		free(evt);
 	}
