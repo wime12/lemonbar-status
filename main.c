@@ -36,7 +36,6 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
-#include <machine/apmvar.h>
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <netinet/if_ether.h>
@@ -66,11 +65,11 @@
 #include "mpd.h"
 #include "mail.h"
 #include "clock.h"
+#include "battery.h"
 
 
 /* TODO: Do not hardcode the home directory. */
 #define IFNAME "trunk0"
-#define APM_DEV_PATH "/dev/apm"
 #define MIXER_DEV_PATH "/dev/mixer"
 #define MIXER_DEVICE_CLASS "outputs"
 #define MIXER_DEVICE "master"
@@ -84,13 +83,11 @@
 #define AUDIO_DOWN_KEYCODE 174
 #define AUDIO_UP_KEYCODE 176
 
-#define BATT_INFO_BUFLEN 13
 #define DATE_BUFLEN 18
 #define BRIGHTNESS_BUFLEN 5
 #define WEATHER_BUFLEN 48
 #define AUDIO_BUFLEN 8
 
-#define CLOCK_INTERVAL (10 * 1000)
 #define BATTERY_INTERVAL (10 * 1000)
 #define NETWORK_INTERVAL (10 * 1000)
 #define BRIGHTNESS_INTERVAL (10 * 1000)
@@ -123,61 +120,10 @@ static char    *brightness_info(xcb_connection_t *, xcb_randr_output_t,
     xcb_atom_t, int);
 int		brightness_init(xcb_connection_t **, xcb_window_t *,
     xcb_atom_t *, xcb_randr_output_t *, int *, int *);
-static char    *battery_info();
 static void	output_status(char **);
 static char    *network_info();
 int		weather_file();
 char	       *weather_info();
-
-
-/* Battery */
-
-static char *
-battery_info()
-{
-	struct apm_power_info info;
-	static char str[BATT_INFO_BUFLEN];
-	int minutes, n, fd, state;
-
-	fd = open(APM_DEV_PATH, O_RDONLY);
-	if (fd == -1) {
-		warn("cannot open " APM_DEV_PATH);
-		return NULL;
-	}
-
-	state = ioctl(fd, APM_IOC_GETPOWER, &info);
-	close(fd);
-
-	if (state < 0) {
-		warn("cannot read battery info");
-		return NULL;
-	}
-
-	n = -1;
-	switch (info.ac_state) {
-
-	case APM_AC_OFF:
-	        minutes = info.minutes_left;
-		if (minutes < 0)
-			n = strlcpy(str, "--:--", BATT_INFO_BUFLEN);
-		else
-			n = snprintf(str, BATT_INFO_BUFLEN, "%d:%02d",
-			    minutes / 60, minutes % 60);
-		/* FALLTHROUGH */
-
-	case APM_AC_ON:
-		if (n < 0)
-			n = strlcpy(str, "A/C", BATT_INFO_BUFLEN);
-
-		snprintf(str + n, BATT_INFO_BUFLEN - n, " (%d%%)",
-		    info.battery_life);
-		return str;
-		break;
-
-	default:
-		return NULL;
-	}
-}
 
 /* Network */
 
