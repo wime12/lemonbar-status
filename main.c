@@ -33,26 +33,17 @@
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/audioio.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/un.h>
-#include <arpa/inet.h>
-#include <net/if.h>
-#include <netinet/if_ether.h>
-#include <net/if_trunk.h>
-#include <netinet/in.h>
 
 #include <errno.h>
 #include <err.h>
 #include <fcntl.h>
-#include <ifaddrs.h>
 #include <inttypes.h>
 #include <paths.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -66,10 +57,10 @@
 #include "mail.h"
 #include "clock.h"
 #include "battery.h"
+#include "net.h"
 
 
 /* TODO: Do not hardcode the home directory. */
-#define IFNAME "trunk0"
 #define MIXER_DEV_PATH "/dev/mixer"
 #define MIXER_DEVICE_CLASS "outputs"
 #define MIXER_DEVICE "master"
@@ -89,7 +80,7 @@
 #define AUDIO_BUFLEN 8
 
 #define BATTERY_INTERVAL (10 * 1000)
-#define NETWORK_INTERVAL (10 * 1000)
+#define NET_INTERVAL (10 * 1000)
 #define BRIGHTNESS_INTERVAL (10 * 1000)
 #define AUDIO_INTERVAL (10 * 1000)
 
@@ -100,7 +91,7 @@ enum infos { INFO_MPD, INFO_MAIL, INFO_NETWORK, INFO_BATTERY,
 
 #define LEFT_ALIGNED INFO_MPD
 
-enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NETWORK_TIMER,
+enum timer_ids { CLOCK_TIMER, BATTERY_TIMER, NET_TIMER,
     BRIGHTNESS_TIMER, AUDIO_TIMER };
 
 struct x_event_loop_args
@@ -121,101 +112,8 @@ static char    *brightness_info(xcb_connection_t *, xcb_randr_output_t,
 int		brightness_init(xcb_connection_t **, xcb_window_t *,
     xcb_atom_t *, xcb_randr_output_t *, int *, int *);
 static void	output_status(char **);
-static char    *network_info();
 int		weather_file();
 char	       *weather_info();
-
-/* Network */
-
-char *
-network_info()
-{
-	static char str[IFNAMSIZ + 1 +
-	    ((INET6_ADDRSTRLEN) > (INET_ADDRSTRLEN) ?
-	     (INET6_ADDRSTRLEN) : (INET_ADDRSTRLEN))];
-	struct ifreq ifr;
-	struct trunk_reqall ra;
-	struct trunk_reqport *rp, rpbuf[TRUNK_MAX_PORTS];
-	char *res = NULL;
-	void *addrp;
-	int i, s, len;
-
-	rp = NULL;
-
-	if ((s = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-	    warn("coud not open socket");
-	    return res;
-	}
-
-	/* Trunk ports */
-
-	strlcpy(ra.ra_ifname, IFNAME, sizeof(ra.ra_ifname));
-	ra.ra_size = sizeof(rpbuf);
-	ra.ra_port = rpbuf;
-
-	if (ioctl(s, SIOCGTRUNK, &ra)) {
-		warn("could not query trunk properties");
-		goto cleanup;
-	}
-
-	if (!(ra.ra_proto & TRUNK_PROTO_FAILOVER)) {
-		warnx("trunk protocol is not 'failover'");
-		goto cleanup;
-	}
-
-	for (i = 0; i < ra.ra_ports; i++)
-		if (rpbuf[i].rp_flags & TRUNK_PORT_ACTIVE) {
-			rp = &rpbuf[i];
-			break;
-		}
-
-	if (rp == NULL) {
-		warnx("no active trunk port found");
-		goto cleanup;
-	}
-
-
-	/* IP address */
-
-	strlcpy(ifr.ifr_name, IFNAME, sizeof(ifr.ifr_name));
-	if (ioctl(s, SIOCGIFADDR, &ifr) == -1) {
-		warn("could not query inet address");
-		goto cleanup;
-	}
-
-	switch (ifr.ifr_addr.sa_family) {
-	case AF_INET:
-		addrp = &((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr;
-		break;
-	case AF_INET6:
-		addrp = &((struct sockaddr_in6 *)&ifr.ifr_addr)->sin6_addr;
-		break;
-	default:
-		warnx("unknown inet address protocol");
-		goto cleanup;
-	}
-
-	
-	/* Output */
-
-	strlcpy(str, rp->rp_portname, sizeof(str));
-
-	len = strnlen(rp->rp_portname, IFNAMSIZ);
-	str[len] = ' ';
-
-	if (inet_ntop(ifr.ifr_addr.sa_family, addrp,
-	    str + len + 1, sizeof(str) - len - 1) == NULL) {
-		warn("could not convert inet address");
-		goto cleanup;
-	}
-
-	res = str;
-
-cleanup:
-	close(s);
-	return res;
-}
-
 
 /* Brightness */
 
@@ -826,10 +724,10 @@ main()
 
         /* Network */
 
-	infos[INFO_NETWORK] = network_info();
+	infos[INFO_NETWORK] = net_info();
 
-	EV_SET(&kev_in[n++], NETWORK_TIMER, EVFILT_TIMER, EV_ADD, 0,
-	    NETWORK_INTERVAL, NULL);
+	EV_SET(&kev_in[n++], NET_TIMER, EVFILT_TIMER, EV_ADD, 0,
+	    NET_INTERVAL, NULL);
 
         /* Event Loop */
 
@@ -886,9 +784,9 @@ main()
 					    battery_info();
 					break;
 
-				case NETWORK_TIMER:
+				case NET_TIMER:
 					infos[INFO_NETWORK] =
-					    network_info();
+					    net_info();
 					break;
 
 				case BRIGHTNESS_TIMER:

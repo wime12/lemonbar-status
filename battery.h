@@ -1,0 +1,1 @@
+char *battery_info();

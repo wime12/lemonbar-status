@@ -1,0 +1,1 @@
+char *net_info();
