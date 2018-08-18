@@ -2,13 +2,13 @@
 #include <time.h>
 #include <err.h>
 
-#define DATE_FORMAT "%a %b %d, %R"
-#define DATE_BUFLEN 18
+#define CLOCK_FORMAT "%a %b %d, %R"
+#define CLOCK_BUFLEN 18
 
 char *
 clock_info(int *next_update)
 {
-	static char str[DATE_BUFLEN];
+	static char str[CLOCK_BUFLEN];
 	struct tm ltime;
 	time_t clock;
 
@@ -28,7 +28,7 @@ clock_info(int *next_update)
 	if (next_update)
 		*next_update = (60 - ltime.tm_sec) * 1000;
 
-	strftime(str, sizeof(str), DATE_FORMAT, &ltime);
+	strftime(str, sizeof(str), CLOCK_FORMAT, &ltime);
 
 	return str;
 }
